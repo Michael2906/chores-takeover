@@ -1,0 +1,9 @@
+@media (min-width: 768px) {
+  .tab:hover {
+    cursor: pointer;
+  }
+  .tab:not(.active):hover {
+    background-color: var(--dark-bg-hover);
+    color: var(--light-font);
+  }
+}
