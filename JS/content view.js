@@ -15,7 +15,10 @@ tabs.forEach((tab) => {
   tab.style.width =
     Math.max(...Array.from(tabs).map((t) => t.offsetWidth)) + 1 + "px";
   tab.addEventListener("click", () => {
-    tabs.forEach((t) => t.classList.remove("active"));
+    setTimeout(() => {
+      tabs.forEach((t) => t.classList.remove("active"));
+      tab.classList.add("active");
+    }, 300);
     tab.classList.add("active");
     updateContentField(tab.id);
   });

@@ -1,30 +1,84 @@
 header {
-  height: 5rem;
-  background-color: var(--light-bg-hover);
-  border-bottom: var(--border-xs) solid var(--ghost);
+  height: var(--spacing-xl);
+  background-color: var(--quaternary);
+}
+
+#logo {
+  height: 100%;
 }
 
 #tabs {
   display: flex;
-  padding: var(--spacing-md) var(--spacing-lg) 0 0;
-  background-color: var(--light-bg);
+  align-items: flex-end;
+  background-color: var(--quaternary);
+  padding-top: var(--spacing-sm);
 }
 
 .tab {
+  height: fit-content;
+  position: relative;
   padding: var(--spacing-sm);
-  background-color: var(--dark-bg);
+  background-color: var(--primary);
   color: var(--light-font);
   border-radius: var(--border-md) var(--border-md) 0 0;
   transition: all 0.3s ease-in-out;
-  box-shadow: inset 0 -0.125rem 0.25rem var(--ghost);
+  box-shadow: inset 0 -0.2rem 0.5rem var(--ghost);
+}
+
+.tab::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 100%;
+  box-shadow: 0.2rem -0.2rem 0.5rem var(--ghost);
+  border-radius: var(--border-md) var(--border-md) 0 0;
 }
 
 .tab.active {
+  background-color: var(--dark-bg);
+  color: var(--light-font);
+  padding: var(--spacing-sm) var(--spacing-sm) var(--spacing-md)
+    var(--spacing-sm);
+}
+
+#search {
+  position: relative;
+  align-self: center;
+  margin-left: auto;
+  margin-right: var(--spacing-xs);
+}
+
+#search-box {
+  padding: var(--spacing-xs) var(--spacing-lg) var(--spacing-xs)
+    var(--spacing-sm);
+  border-radius: var(--border-lg);
+  border: 2px solid black;
+}
+
+#search-button {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  top: 0;
+  right: 0;
   background-color: var(--primary);
   color: var(--light-font);
-  box-shadow: none;
+  height: 100%;
+  aspect-ratio: 1;
+  border-radius: 0 var(--border-lg) var(--border-lg) 0;
+  border-top: 2px solid black;
+  border-right: 2px solid black;
+  border-bottom: 2px solid black;
+}
+
+#search-button:active {
+  opacity: 1;
 }
 
 #content-field {
-  background-color: var(--primary);
+  background-color: var(--dark-bg);
+  box-shadow: 0 -0.4rem 0.5rem var(--ghost);
 }

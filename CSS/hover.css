@@ -1,9 +1,10 @@
 @media (min-width: 768px) {
-  .tab:hover {
+  .tab:hover,
+  #search-button:hover {
     cursor: pointer;
   }
-  .tab:not(.active):hover {
-    background-color: var(--dark-bg-hover);
-    color: var(--light-font);
+  .tab:not(.active):hover,
+  #search-button:hover {
+    opacity: 0.9;
   }
 }
