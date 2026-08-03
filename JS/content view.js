@@ -15,15 +15,16 @@ tabs.forEach((tab) => {
   tab.style.width =
     Math.max(...Array.from(tabs).map((t) => t.offsetWidth)) + 1 + "px";
   tab.addEventListener("click", () => {
-    setTimeout(() => {
-      tabs.forEach((t) => t.classList.remove("active"));
-      tab.classList.add("active");
-    }, 300);
+    tabs.forEach((t) => t.classList.remove("active"));
     tab.classList.add("active");
     updateContentField(tab.id);
   });
 });
 
 window.addEventListener("resize", () => {
+  document.documentElement.style.setProperty(
+    "--font-size",
+    `${window.innerWidth / 128}px`,
+  );
   updateContentField(document.querySelector(".tab.active").id);
 });
