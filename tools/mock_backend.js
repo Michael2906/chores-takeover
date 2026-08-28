@@ -279,6 +279,25 @@
     return plan;
   }
 
+  /** Mirrors maySee() in Chores.gs. */
+  function maySee(c, me) {
+    if (!c.assigneeId) return true;
+    if (String(c.assigneeId) === String(me.memberId)) return true;
+    if (me.role === 'owner') return true;
+    if (!m_role_approver(me)) return false;
+    var who = find(DB.members, 'memberId', c.assigneeId);
+    return !!who && !m_role_approver(who);
+  }
+
+  function assertMaySee(c, me) {
+    if (maySee(c, me)) return;
+    var who = find(DB.members, 'memberId', c.assigneeId);
+    if (m_role_approver(me) && who && m_role_approver(who)) {
+      throw new Error("That is another parent's chore. Only the account holder can change it.");
+    }
+    throw new Error('That is not your chore.');
+  }
+
   function ownChore(hid, cid) {
     var c = find(DB.chores, 'choreId', cid);
     if (!c || c.householdId !== hid) throw new Error('That chore no longer exists.');
@@ -315,7 +334,7 @@
   function board(token) {
     var me = requireMember(token);
     var mine = DB.chores.filter(function (c) {
-      return c.householdId === me.householdId;
+      return c.householdId === me.householdId && maySee(c, me);
     }).map(view);
 
     return {
@@ -498,9 +517,7 @@
     updateChore: function (p) {
       var me = requireApprover(p.memberToken);
       var c = ownChore(me.householdId, p.choreId);
-      var boss = me.role === 'owner' || me.role === 'approver';
-      if (!boss && (c.createdBy !== me.memberId || c.status !== 'pool'))
-        throw new Error('Only a parent account can change that chore.');
+      assertMaySee(c, me);
 
       if (p.title !== undefined) {
         if (!String(p.title).trim()) throw new Error('Give the chore a name.');
@@ -517,9 +534,7 @@
     deleteChore: function (p) {
       var me = requireApprover(p.memberToken);
       var c = ownChore(me.householdId, p.choreId);
-      var boss = me.role === 'owner' || me.role === 'approver';
-      if (!boss && (c.createdBy !== me.memberId || c.status !== 'pool'))
-        throw new Error('Only a parent account can delete that chore.');
+      assertMaySee(c, me);
       DB.chores = DB.chores.filter(function (x) { return x.choreId !== c.choreId; });
       return board(p.memberToken);
     },
@@ -540,8 +555,7 @@
     releaseChore: function (p) {
       var me = requireMember(p.memberToken);
       var c = ownChore(me.householdId, p.choreId);
-      var boss = me.role === 'owner' || me.role === 'approver';
-      if (c.assigneeId !== me.memberId && !boss) throw new Error('That is not your chore.');
+      assertMaySee(c, me);
       if (c.troughId || c.styId) {
         throw new Error(c.troughId
           ? 'Trough chores stay with the person they went to. A parent can hand it to somebody else.'
@@ -555,6 +569,7 @@
     startChore: function (p) {
       var me = requireMember(p.memberToken);
       var c = ownChore(me.householdId, p.choreId);
+      assertMaySee(c, me);
       if (c.status !== 'claimed') throw new Error('That chore has moved on. Pull to refresh.');
       c.status = 'in_progress'; c.startedAt = now();
       return board(p.memberToken);
@@ -563,6 +578,7 @@
     pauseChore: function (p) {
       var me = requireMember(p.memberToken);
       var c = ownChore(me.householdId, p.choreId);
+      assertMaySee(c, me);
       if (c.status !== 'in_progress') throw new Error('That chore has moved on. Pull to refresh.');
       c.status = 'claimed'; c.startedAt = '';
       return board(p.memberToken);
@@ -571,6 +587,7 @@
     submitChore: function (p) {
       var me = requireMember(p.memberToken);
       var c = ownChore(me.householdId, p.choreId);
+      assertMaySee(c, me);
       if (['claimed', 'in_progress'].indexOf(c.status) < 0)
         throw new Error('That chore has moved on. Pull to refresh.');
       c.status = 'submitted'; c.submittedAt = now();
@@ -581,6 +598,7 @@
     approveChore: function (p) {
       var me = requireApprover(p.memberToken);
       var c = ownChore(me.householdId, p.choreId);
+      assertMaySee(c, me);
       if (c.status !== 'submitted') throw new Error('That chore is already done.');
       c.status = 'done'; c.approvedBy = me.memberId; c.approvedAt = now();
       c.reviewNote = '';
@@ -595,6 +613,7 @@
     sendBackChore: function (p) {
       var me = requireApprover(p.memberToken);
       var c = ownChore(me.householdId, p.choreId);
+      assertMaySee(c, me);
       if (c.status !== 'submitted') throw new Error('That chore has moved on. Pull to refresh.');
       c.status = 'in_progress'; c.submittedAt = '';
       c.reviewNote = String(p.note || '').trim() || 'Needs another look.';
@@ -604,6 +623,7 @@
     assignChore: function (p) {
       var me = requireApprover(p.memberToken);
       var c = ownChore(me.householdId, p.choreId);
+      assertMaySee(c, me);
       if (c.status === 'done') throw new Error('That chore is already done.');
       var t = find(DB.members, 'memberId', p.assigneeId);
       if (!t || t.householdId !== me.householdId)
@@ -834,6 +854,7 @@
     reopenChore: function (p) {
       var me = requireApprover(p.memberToken);
       var c = ownChore(me.householdId, p.choreId);
+      assertMaySee(c, me);
       if (c.status !== 'done') throw new Error('That chore is not done.');
       c.status = 'pool'; c.assigneeId = ''; c.claimedAt = '';
       c.startedAt = ''; c.submittedAt = ''; c.approvedBy = '';

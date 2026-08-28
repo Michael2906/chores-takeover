@@ -66,6 +66,11 @@ function loadBoard(payload) {
   var done = [];
 
   all.forEach(function (c) {
+    // Filtered HERE, not in the browser. Sending every chore down and hiding
+    // some of them client-side would still put one parent's chores in the
+    // other parent's page source.
+    if (!maySee(c, me, byId[c.assigneeId])) return;
+
     var view = choreView(c, byId);
     if (c.status === STATUS.DONE) done.push(view); else live.push(view);
   });
@@ -150,6 +155,47 @@ function refAllocator(householdId) {
     if (n > max) max = n;
   });
   return function () { return ++max; };
+}
+
+/**
+ * Whether somebody may see -- and therefore act on -- a chore.
+ *
+ * One rule, in one place, used for both, because a chore you can see but not
+ * touch (or worse, touch but not see) is how a permission model rots.
+ *
+ *   Account holder   everything.
+ *   Parent           their own, and every child's. NOT another parent's.
+ *   Child            their own only.
+ *
+ * Unclaimed work is everybody's business regardless -- that is what the pool
+ * is for.
+ *
+ * `who` is the assignee, already looked up when the caller has the roster to
+ * hand; otherwise it is fetched.
+ */
+function maySee(c, me, who) {
+  if (!c.assigneeId) return true;
+  if (String(c.assigneeId) === String(me.memberId)) return true;
+  if (me.role === 'owner') return true;
+  if (!canApprove(me)) return false;
+
+  if (who === undefined) {
+    who = findOne(CONFIG.SHEET_MEMBERS, { memberId: c.assigneeId });
+  }
+  // A parent sees the children, not the other parent.
+  return !!who && !canApprove(who);
+}
+
+/** maySee, as a guard. */
+function assertMaySee(c, me) {
+  if (maySee(c, me)) return;
+
+  var who = findOne(CONFIG.SHEET_MEMBERS, { memberId: c.assigneeId });
+  if (canApprove(me) && who && canApprove(who)) {
+    throw new Error('That is another parent\'s chore. Only the account ' +
+                    'holder can change it.');
+  }
+  throw new Error('That is not your chore.');
 }
 
 /** True for a chore handed out by the Trough or the Sty. */
@@ -258,6 +304,7 @@ function updateChore(payload) {
   payload = payload || {};
   var me = requireApprover(payload.memberToken);
   var c = ownChore(me.householdId, payload.choreId);
+  assertMaySee(c, me);
 
   var changes = {};
   if (payload.title !== undefined) {
@@ -292,6 +339,7 @@ function deleteChore(payload) {
   payload = payload || {};
   var me = requireApprover(payload.memberToken);
   var c = ownChore(me.householdId, payload.choreId);
+  assertMaySee(c, me);
 
   logAction(me.householdId, c.choreId, me.memberId, 'deleted', c.title);
   remove(CONFIG.SHEET_CHORES, c);
@@ -347,9 +395,7 @@ function releaseChore(payload) {
   var c = ownChore(me.householdId, payload.choreId);
 
   assertStatus(c, [STATUS.CLAIMED, STATUS.PROGRESS, STATUS.SUBMIT]);
-  if (String(c.assigneeId) !== String(me.memberId) && !canApprove(me)) {
-    throw new Error('That is not your chore.');
-  }
+  assertMaySee(c, me);
 
   // A chore that was handed to somebody is theirs. Dropping it into the pool
   // would let anyone pick up work that was deliberately shared out, and the
@@ -381,9 +427,7 @@ function startChore(payload) {
   var c = ownChore(me.householdId, payload.choreId);
 
   assertStatus(c, [STATUS.CLAIMED]);
-  if (String(c.assigneeId) !== String(me.memberId) && !canApprove(me)) {
-    throw new Error('That is not your chore.');
-  }
+  assertMaySee(c, me);
 
   update(CONFIG.SHEET_CHORES, c, { status: STATUS.PROGRESS, startedAt: stamp() });
   logAction(me.householdId, c.choreId, me.memberId, 'started', c.title);
@@ -398,9 +442,7 @@ function pauseChore(payload) {
   var c = ownChore(me.householdId, payload.choreId);
 
   assertStatus(c, [STATUS.PROGRESS]);
-  if (String(c.assigneeId) !== String(me.memberId) && !canApprove(me)) {
-    throw new Error('That is not your chore.');
-  }
+  assertMaySee(c, me);
 
   update(CONFIG.SHEET_CHORES, c, { status: STATUS.CLAIMED, startedAt: '' });
   logAction(me.householdId, c.choreId, me.memberId, 'paused', c.title);
@@ -421,9 +463,7 @@ function submitChore(payload) {
   var c = ownChore(me.householdId, payload.choreId);
 
   assertStatus(c, [STATUS.CLAIMED, STATUS.PROGRESS]);
-  if (String(c.assigneeId) !== String(me.memberId) && !canApprove(me)) {
-    throw new Error('That is not your chore.');
-  }
+  assertMaySee(c, me);
 
   update(CONFIG.SHEET_CHORES, c, {
     status: STATUS.SUBMIT,
@@ -451,6 +491,7 @@ function approveChore(payload) {
   lock.waitLock(30000);
   try {
     var c = ownChore(me.householdId, payload.choreId);
+    assertMaySee(c, me);
     assertStatus(c, [STATUS.SUBMIT]);
 
     update(CONFIG.SHEET_CHORES, c, {
@@ -486,6 +527,7 @@ function sendBackChore(payload) {
   payload = payload || {};
   var me = requireApprover(payload.memberToken);
   var c = ownChore(me.householdId, payload.choreId);
+  assertMaySee(c, me);
 
   assertStatus(c, [STATUS.SUBMIT]);
 
@@ -505,6 +547,7 @@ function assignChore(payload) {
   payload = payload || {};
   var me = requireApprover(payload.memberToken);
   var c = ownChore(me.householdId, payload.choreId);
+  assertMaySee(c, me);
 
   if (c.status === STATUS.DONE) throw new Error('That chore is already done.');
 
@@ -529,6 +572,7 @@ function reopenChore(payload) {
   payload = payload || {};
   var me = requireApprover(payload.memberToken);
   var c = ownChore(me.householdId, payload.choreId);
+  assertMaySee(c, me);
 
   assertStatus(c, [STATUS.DONE]);
 

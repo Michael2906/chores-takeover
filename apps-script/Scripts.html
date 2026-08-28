@@ -602,6 +602,14 @@
     document.querySelectorAll('[data-menu=trough],[data-menu=sty]')
       .forEach(function (b) { b.hidden = !me.canApprove; });
 
+    // The strip is static markup, so its label has to be updated by hand.
+    var claimedTab = $('my-chores');
+    if (claimedTab) {
+      var badge = claimedTab.querySelector('.tab-count');
+      claimedTab.textContent = me.canApprove ? 'Claimed ' : 'My Chores ';
+      claimedTab.appendChild(badge);
+    }
+
     renderCounts();
     renderContent();
   }
@@ -615,29 +623,50 @@
    * approval; anyone else sees only their own. Done is shared -- the point of
    * a household board is that finished work is visible.
    */
+  /**
+   * The chores belonging on one tab.
+   *
+   * No visibility rule here any more -- the server decides what reaches this
+   * browser, so anything in state.chores is already something this person is
+   * allowed to see. A parent therefore gets their own AND every child's,
+   * which is the point: they can follow who has what and where it has got to.
+   *
+   * Own chores sort first, so a parent's list opens on their own work rather
+   * than making them hunt for it among the children's.
+   */
   function choresFor(tabId) {
     var me = state.me || {};
-    var mine = function (c) { return c.assigneeId === me.memberId; };
 
-    return state.chores.filter(function (c) {
+    var list = state.chores.filter(function (c) {
       switch (tabId) {
         case 'community-pool':     return c.status === 'pool';
-        case 'my-chores':          return c.status === 'claimed' && mine(c);
-        case 'in-progress':        return c.status === 'in_progress' &&
-                                          (me.canApprove || mine(c));
-        case 'ready-for-approval': return c.status === 'submitted' &&
-                                          (me.canApprove || mine(c));
+        case 'my-chores':          return c.status === 'claimed';
+        case 'in-progress':        return c.status === 'in_progress';
+        case 'ready-for-approval': return c.status === 'submitted';
         case 'done':               return c.status === 'done';
         default: return false;
       }
+    });
+
+    if (!me.canApprove) return list;
+
+    return list.slice().sort(function (a, b) {
+      var am = a.assigneeId === me.memberId ? 0 : 1;
+      var bm = b.assigneeId === me.memberId ? 0 : 1;
+      return am - bm;
     });
   }
 
   /** The five tabs, in order, with the label each one shows. */
   function tabList() {
+    // A parent sees the children's claimed chores in this tab as well as
+    // their own, so "My Chores" would be a lie. Children see only their own,
+    // where it is exactly right.
+    var claimedLabel = (state.me && state.me.canApprove) ? 'Claimed' : 'My Chores';
+
     return [
       { id: 'community-pool',     label: 'Community Pool' },
-      { id: 'my-chores',          label: 'My Chores' },
+      { id: 'my-chores',          label: claimedLabel },
       { id: 'in-progress',        label: 'In Progress' },
       { id: 'ready-for-approval', label: 'Ready for Approval' },
       { id: 'done',               label: 'Done' }
@@ -715,6 +744,7 @@
   }
 
   function emptyState() {
+    var boss = !!(state.me && state.me.canApprove);
     if (state.query) {
       return '<div class="empty"><h2>Nothing matches</h2>' +
              '<p>No chore here mentions “' + esc(state.query) + '”.</p></div>';
@@ -722,10 +752,13 @@
     var copy = {
       'community-pool': ['The pool is empty',
                          'Nothing is going spare. Add a chore with the + button.'],
-      'my-chores': ['You have not claimed anything',
-                    'Take something from the Community Pool.'],
-      'in-progress': ['Nothing on the go',
-                      'Chores you have started show up here.'],
+      'my-chores': boss
+        ? ['Nothing claimed', 'Chores that have been taken but not started.']
+        : ['You have not claimed anything',
+           'Take something from the Community Pool.'],
+      'in-progress': boss
+        ? ['Nothing on the go', 'Chores anybody has started show up here.']
+        : ['Nothing on the go', 'Chores you have started show up here.'],
       'ready-for-approval': ['Nothing waiting',
                              'Finished chores land here for a parent to approve.'],
       'done': ['Nothing finished yet', 'Approved chores are kept here.']

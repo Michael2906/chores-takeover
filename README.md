@@ -314,6 +314,40 @@ that happens off the board.
 
 ---
 
+## Who sees whose chores
+
+One rule, applied to **both** reading and acting, because a chore you can see
+but not touch — or worse, touch but not see — is how a permission model rots.
+
+| | Own | Children's | Another parent's | The pool |
+| --- | --- | --- | --- | --- |
+| **Account holder** | ✓ | ✓ | ✓ | ✓ |
+| **Parent** | ✓ | ✓ | ✗ | ✓ |
+| **Child** | ✓ | ✗ | ✗ | ✓ |
+
+Unclaimed work is everybody's business regardless — that is what the pool is
+for.
+
+A parent therefore sees every child's chore in **every** tab, at whatever
+stage it has reached, which is the point: they can follow who has what and how
+far along it is. The account holder additionally sees the other parent's, and
+can start, submit, reassign, edit or delete anything.
+
+**Filtered server-side, in `loadBoard`.** Sending the whole household down and
+hiding some of it in the browser would still put one parent's chores in the
+other parent's page source. Every mutation goes through the same
+`assertMaySee` gate — all of them except `claimChore`, which acts on
+unassigned pool chores and needs no gate.
+
+Because a parent's *My Chores* tab now holds the children's claimed chores as
+well, it is relabelled **Claimed** for them. Children still see *My Chores*,
+where it is exactly right. Your own sort first either way.
+
+> Note one thing this does **not** change: a parent can still approve a chore
+> assigned to themselves. Points are weighted towards children anyway, so
+> there is not much to game, but it is worth knowing before anybody relies on
+> parent point totals.
+
 ## Chore identity
 
 Every chore carries three things, so two cards both reading "Take the trash
