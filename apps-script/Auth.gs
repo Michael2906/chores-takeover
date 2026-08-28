@@ -233,9 +233,24 @@ function requireApprover(memberToken) {
   return m;
 }
 
-/** True for the roles allowed to approve chores and manage sub-accounts. */
+/** True for the roles allowed to approve chores and post them. */
 function canApprove(member) {
   return member.role === 'owner' || member.role === 'approver';
+}
+
+/**
+ * As requireMember, but only the account holder passes.
+ *
+ * Managing accounts is deliberately narrower than approving chores: a second
+ * parent can approve work all day without being able to rename a child, reset
+ * a PIN, or hand somebody else parent access.
+ */
+function requireOwner(memberToken) {
+  var m = requireMember(memberToken);
+  if (m.role !== 'owner') {
+    throw new Error('Only the account holder can manage accounts.');
+  }
+  return m;
 }
 
 /** The safe-to-send shape of a member -- never the hash or the salt. */
@@ -243,6 +258,7 @@ function publicMember(m) {
   return {
     memberId: m.memberId,
     name: m.name,
+    realName: m.realName || m.name,
     role: m.role,
     color: m.color,
     points: Number(m.points || 0),
@@ -305,7 +321,10 @@ function createHousehold(payload) {
     var owner = {
       memberId: newId('m'),
       householdId: householdId,
+      // name is what the household sees and can be changed to "Dad"; realName
+      // is what the account is actually in, and is never displayed.
       name: ownerName,
+      realName: ownerName,
       role: 'owner',
       pinHash: '',
       pinSalt: '',
@@ -472,7 +491,7 @@ function activeMembers(householdId) {
 /** Adds a sub-account. PIN is optional -- blank means the name alone gets in. */
 function addMember(payload) {
   payload = payload || {};
-  var actor = requireApprover(payload.memberToken);
+  var actor = requireOwner(payload.memberToken);
 
   var name = String(payload.name || '').trim();
   if (!name) throw new Error('Enter a name.');
@@ -499,6 +518,7 @@ function addMember(payload) {
       memberId: newId('m'),
       householdId: actor.householdId,
       name: name,
+      realName: String(payload.realName || name).trim(),
       role: role,
       pinHash: pin ? hashSecret(pin, salt) : '',
       pinSalt: salt,
@@ -521,7 +541,7 @@ function addMember(payload) {
 /** Renames, re-roles, re-PINs or turns off a sub-account. */
 function updateMember(payload) {
   payload = payload || {};
-  var actor = requireApprover(payload.memberToken);
+  var actor = requireOwner(payload.memberToken);
 
   var m = findOne(CONFIG.SHEET_MEMBERS, { memberId: payload.targetId });
   if (!m || String(m.householdId) !== String(actor.householdId)) {
@@ -534,6 +554,14 @@ function updateMember(payload) {
     var name = String(payload.name).trim();
     if (!name) throw new Error('A name cannot be blank.');
     changes.name = name;
+  }
+
+  // The display name is what the household sees -- "Dad" rather than Michael.
+  // realName is what the account is actually in and is never shown on the
+  // board, so changing one does not touch the other.
+  if (payload.realName !== undefined) {
+    var real = String(payload.realName).trim();
+    changes.realName = real || changes.name || m.name;
   }
 
   if (payload.role !== undefined) {

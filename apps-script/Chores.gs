@@ -76,7 +76,8 @@ function loadBoard(payload) {
     members: members,
     chores: live.concat(done),
     categories: CONFIG.CATEGORIES,
-    pointPresets: CONFIG.POINT_PRESETS
+    pointPresets: CONFIG.POINT_PRESETS,
+    suggestions: CONFIG.SUGGESTIONS || []
   };
 }
 
@@ -150,30 +151,27 @@ function statusWords(status) {
 // ---------------------------------------------------------------------
 
 /**
- * Posts a chore.
+ * Posts a chore. Parent accounts only.
  *
- * Anyone may add one -- volunteering to do something is worth encouraging --
- * but only a parent account sets its point value, or a child could award
- * itself twenty points for making its own bed.
+ * Children claim from the pool rather than stocking it: letting them post
+ * their own work is how "tidy my own desk, 20 points" gets onto the board.
  */
 function createChore(payload) {
   payload = payload || {};
-  var me = requireMember(payload.memberToken);
+  var me = requireApprover(payload.memberToken);
 
   var title = String(payload.title || '').trim();
   if (!title) throw new Error('Give the chore a name.');
   if (title.length > 120) title = title.slice(0, 120);
 
-  var points = 0;
-  if (canApprove(me)) {
-    points = Math.max(0, Math.min(999, Math.round(Number(payload.points) || 0)));
-  }
+  var points = Math.max(0, Math.min(999,
+                        Math.round(Number(payload.points) || 0)));
 
   var assigneeId = '';
   var status = STATUS.POOL;
 
-  // A parent can hand a chore straight to somebody instead of pooling it.
-  if (payload.assigneeId && canApprove(me)) {
+  // A chore can be handed straight to somebody instead of pooled.
+  if (payload.assigneeId) {
     var target = findOne(CONFIG.SHEET_MEMBERS, { memberId: payload.assigneeId });
     if (!target || String(target.householdId) !== String(me.householdId)) {
       throw new Error('That person is not in this household.');
@@ -208,20 +206,11 @@ function createChore(payload) {
   return loadBoard(payload);
 }
 
-/**
- * Edits a chore. A parent can change any of them; anyone else only their own,
- * and only while it is still sitting in the pool.
- */
+/** Edits a chore. Parent accounts only, same as posting one. */
 function updateChore(payload) {
   payload = payload || {};
-  var me = requireMember(payload.memberToken);
+  var me = requireApprover(payload.memberToken);
   var c = ownChore(me.householdId, payload.choreId);
-
-  if (!canApprove(me)) {
-    if (String(c.createdBy) !== String(me.memberId) || c.status !== STATUS.POOL) {
-      throw new Error('Only a parent account can change that chore.');
-    }
-  }
 
   var changes = {};
   if (payload.title !== undefined) {
@@ -234,9 +223,9 @@ function updateChore(payload) {
   if (payload.dueDate !== undefined) changes.dueDate = cleanDate(payload.dueDate);
   if (payload.recurrence !== undefined) changes.recurrence = cleanRecurrence(payload.recurrence);
 
-  // Points stay a parent's decision, on edit as much as on create.
-  if (payload.points !== undefined && canApprove(me)) {
-    changes.points = Math.max(0, Math.min(999, Math.round(Number(payload.points) || 0)));
+  if (payload.points !== undefined) {
+    changes.points = Math.max(0, Math.min(999,
+                              Math.round(Number(payload.points) || 0)));
   }
 
   update(CONFIG.SHEET_CHORES, c, changes);
@@ -249,14 +238,9 @@ function updateChore(payload) {
 /** Deletes a chore. Same rule as editing one. */
 function deleteChore(payload) {
   payload = payload || {};
-  var me = requireMember(payload.memberToken);
+  var me = requireApprover(payload.memberToken);
   var c = ownChore(me.householdId, payload.choreId);
 
-  if (!canApprove(me)) {
-    if (String(c.createdBy) !== String(me.memberId) || c.status !== STATUS.POOL) {
-      throw new Error('Only a parent account can delete that chore.');
-    }
-  }
   logAction(me.householdId, c.choreId, me.memberId, 'deleted', c.title);
   remove(CONFIG.SHEET_CHORES, c);
 

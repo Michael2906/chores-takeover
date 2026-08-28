@@ -112,8 +112,11 @@
       <header id="header">
         <div class="brand">
           <div class="brand-mark" id="header-logo"></div>
-          <span class="brand-household" id="header-household"></span>
         </div>
+
+        <!-- A direct child of the header grid, not nested in .brand, so it
+             centres against the header itself rather than the leftover space. -->
+        <span class="brand-household" id="header-household"></span>
 
         <div id="account-info">
           <button class="chip" id="account-chip" aria-haspopup="true"
@@ -156,6 +159,16 @@
           <button id="done" class="tab" role="tab" aria-selected="false">
             Done <span class="tab-count"></span>
           </button>
+        </div>
+
+        <!-- Replaces the strip under 780px. Same five destinations, and it
+             shows every count at once instead of hiding them off-screen. -->
+        <div id="tab-menu">
+          <button id="tab-menu-btn" aria-haspopup="true" aria-expanded="false">
+            <span id="tab-menu-label">Community Pool</span>
+            <span class="caret" aria-hidden="true">▼</span>
+          </button>
+          <div id="tab-menu-list" hidden></div>
         </div>
 
         <div id="search">

@@ -15,30 +15,38 @@
      window.innerWidth / 128 in a resize handler, which meant the first
      paint always used the hard-coded 24px and then jumped, and which on a
      375px phone would have computed 2.9px. clamp() does the same job with
-     no flash and a floor that stays readable. */
-  --font-size: clamp(15px, 0.55vw + 13px, 19px);
+     no flash and a floor that stays readable.
 
-  /* Colour palette */
-  --primary: #02407d;
-  --secondary: #914a42;
-  --tertiary: #bba255;
-  --quaternary: #2ecfb4;
-  --quinary: #a0ed93;
-  --ghost: #80808080;
-  --dark-font: #333;
-  --light-font: #d0d0d0;
-  --dark-bg: #545454;
-  --light-bg: #f5f5f5;
-  --error: #c62828;
-  --warning: #f9a825;
-  --success: #2e7d32;
-  --info: #6a1b9a;
+     The floor is 17px, not 15px: at 15 the whole interface read as cramped
+     on a phone, which is where this actually gets used. */
+  --font-size: clamp(17px, 0.5vw + 15.5px, 19px);
+
+  /* Colour palette.
+
+     Toned down from the first pass, which put saturated teal, strong blue and
+     mid-grey against each other all at once and was tiring to look at. Same
+     hues, much lower saturation, and the greys warmed slightly so white cards
+     sit on them without the blue-cast glare. */
+  --primary: #2f5d8a;      /* was #02407d -- softer, less inky */
+  --secondary: #9c6259;    /* was #914a42 */
+  --tertiary: #c2ab72;     /* was #bba255 */
+  --quaternary: #7fc9bd;   /* was #2ecfb4 -- the loud one; now a soft sage-teal */
+  --quinary: #b7dcae;
+  --ghost: #8a8a8a3d;
+  --dark-font: #2f3336;
+  --light-font: #eef1f2;
+  --dark-bg: #7e8a90;      /* was #545454 -- lighter, so cards do not glare */
+  --light-bg: #f4f6f7;
+  --error: #b4544b;
+  --warning: #d8a24a;
+  --success: #5c9268;
+  --info: #7a6a99;
 
   /* Surfaces derived from the palette above */
   --card: #ffffff;
-  --card-sunk: #efefef;
-  --line: #d8d8d8;
-  --muted: #6b6b6b;
+  --card-sunk: #f0f2f3;
+  --line: #dde1e3;
+  --muted: #6d767b;
 
   /* Edge dimensions */
   --border-xs: 0.125rem;
@@ -391,9 +399,13 @@ h1, h2, h3 { line-height: 1.25; }
 }
 
 #header {
-  display: flex;
+  /* Three columns, with the middle one centred in the HEADER rather than in
+     the space left over. A flex row would push the name off-centre by however
+     much wider the account chip is than the logo, which is what made it look
+     wrong hugging the left. */
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: space-between;
   gap: var(--spacing-sm);
   height: var(--header-h);
   padding: 0 var(--spacing-sm);
@@ -406,17 +418,22 @@ h1, h2, h3 { line-height: 1.25; }
   align-items: center;
   gap: var(--spacing-sm);
   min-width: 0;
+  justify-self: start;
 }
 
 .brand-household {
+  grid-column: 2;
+  justify-self: center;
   font-weight: bold;
-  color: #06342d;
+  font-size: 1.05rem;
+  color: #23443f;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 100%;
 }
 
-#account-info { position: relative; flex: none; }
+#account-info { position: relative; justify-self: end; }
 
 .chip {
   display: flex;
@@ -477,26 +494,18 @@ h1, h2, h3 { line-height: 1.25; }
   align-items: flex-end;
   gap: var(--spacing-sm);
   background-color: var(--quaternary);
-  padding: var(--spacing-sm) var(--spacing-sm) 0;
+  /* No left padding: the tab row starts hard against the window edge. */
+  padding: var(--spacing-sm) var(--spacing-sm) 0 0;
   flex: none;
 }
 
 .tab-strip {
   display: flex;
   align-items: flex-end;
-  gap: var(--border-xs);
-  /* Five tabs plus a search box do not fit a phone. The old build forced
-     every tab to the width of the widest one, which guaranteed an overflow;
-     this scrolls instead. */
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-  -webkit-overflow-scrolling: touch;
+  gap: 0;               /* tabs touch each other */
   min-width: 0;
   flex: 1;
 }
-
-.tab-strip::-webkit-scrollbar { display: none; }
 
 .tab {
   position: relative;
@@ -510,6 +519,66 @@ h1, h2, h3 { line-height: 1.25; }
   white-space: nowrap;
   font-weight: bold;
 }
+
+/* Touching tabs need a hairline between them, and the first one squares off
+   against the window edge so it genuinely hugs the side. */
+.tab + .tab { border-left: 1px solid rgba(255, 255, 255, 0.18); }
+.tab:first-child { border-top-left-radius: 0; }
+
+/* The condensed control that replaces the strip on a narrow screen. */
+#tab-menu { display: none; position: relative; flex: 1; min-width: 0; }
+
+#tab-menu-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  width: 100%;
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--primary);
+  color: #fff;
+  border-radius: var(--border-md);
+  font-weight: bold;
+  min-height: 2.4rem;
+}
+
+#tab-menu-btn .caret { font-size: 0.7em; opacity: 0.85; }
+
+#tab-menu-list {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + var(--spacing-xs));
+  background: var(--card);
+  border-radius: var(--border-md);
+  box-shadow: 0 0.4rem 1rem rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  z-index: 25;
+}
+
+#tab-menu-list button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  width: 100%;
+  text-align: left;
+  padding: var(--spacing-sm) var(--spacing-md);
+  color: var(--dark-font);
+}
+
+#tab-menu-list button.on { background: var(--primary); color: #fff; }
+#tab-menu-list button:not(.on):hover { background: var(--card-sunk); }
+
+#tab-menu-list .n {
+  background: var(--card-sunk);
+  color: var(--muted);
+  border-radius: var(--border-lg);
+  padding: 0 var(--spacing-sm);
+  font-size: 0.8em;
+}
+
+#tab-menu-list button.on .n { background: rgba(255, 255, 255, 0.25); color: #fff; }
 
 .tab.active {
   background-color: var(--dark-bg);
@@ -710,7 +779,15 @@ h1, h2, h3 { line-height: 1.25; }
   overflow-y: auto;
   padding: var(--spacing-lg);
   box-shadow: 0 0.6rem 2rem rgba(0, 0, 0, 0.5);
+
+  /* Scroll without the bar. A gutter appearing inside a rounded dialog cuts
+     the corner off and reads as a rendering fault. It still scrolls by wheel,
+     drag and keyboard. */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
+
+.modal::-webkit-scrollbar { width: 0; height: 0; display: none; }
 
 .modal-head {
   display: flex;
@@ -803,33 +880,46 @@ h1, h2, h3 { line-height: 1.25; }
    responsive
    ------------------------------------------------------------------- */
 
-/* Tablet and below: search drops onto its own row under the tabs. */
+/* Narrow: the five tabs become one dropdown, sharing a row with the search
+   box. Five tabs plus a search field never fit a phone, and a scrolling strip
+   hides whichever tabs are off-screen -- a dropdown shows all five and their
+   counts at once. */
 @media (max-width: 780px) {
   #tabs {
-    flex-wrap: wrap;
-    padding-bottom: 0;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-sm);
   }
-  .tab-strip { order: 2; width: 100%; flex-basis: 100%; }
-  #search { order: 1; width: 100%; margin-bottom: var(--spacing-sm); }
+  .tab-strip { display: none; }
+  #tab-menu { display: block; }
+
+  #search { flex: 1; min-width: 0; margin-bottom: 0; }
   #search-box { width: 100%; }
-  .tab { padding: var(--spacing-sm); font-size: 0.9rem; }
 }
 
 /* Phone */
 @media (max-width: 480px) {
-  :root { --header-h: 2.9rem; }
+  :root { --header-h: 3rem; }
 
   .card { padding: var(--spacing-md); }
   #content-field { padding: var(--spacing-sm); padding-bottom: 5rem; }
 
   .chore-list { grid-template-columns: 1fr; }
-  .member-grid { grid-template-columns: repeat(auto-fill, minmax(6.2rem, 1fr)); }
+  .member-grid { grid-template-columns: repeat(auto-fill, minmax(6.8rem, 1fr)); }
 
-  .brand-household { display: none; }
-  .chip { max-width: 8.5rem; }
+  /* The household name keeps its place in the middle -- it just gets less
+     room, so it truncates rather than disappearing. */
+  .brand-household { font-size: 0.95rem; }
+  .brand-mark { width: 4.2rem; height: 2.2rem; }
+  .chip { max-width: 7.5rem; }
+  .chip-name { display: none; }
 
   .modal { padding: var(--spacing-md); }
   .modal-actions .btn { flex: 1; }
+
+  /* Bigger touch targets and a bit more air, now the base size is larger. */
+  .btn { min-height: 2.6rem; }
+  .chore { padding: var(--spacing-md); }
 }
 
 /* Short landscape phone: reclaim vertical space. */

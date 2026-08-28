@@ -31,9 +31,15 @@ function schema(name) {
       'householdId', 'name', 'ownerEmail', 'passwordHash', 'passwordSalt',
       'createdAt', 'failedAttempts', 'lockedUntil'
     ];
+    // NEW COLUMNS GO ON THE END. The header row is positional, so inserting
+    // one in the middle would shift every value in an existing sheet by one
+    // and silently scramble live data. 'realName' is appended for exactly
+    // that reason -- rows written before it existed simply read blank, and
+    // publicMember() falls back to the display name.
     _schema[CONFIG.SHEET_MEMBERS] = [
-      'memberId', 'householdId', 'name', 'role', 'pinHash', 'pinSalt',
-      'color', 'points', 'active', 'createdAt', 'failedAttempts', 'lockedUntil'
+      'memberId', 'householdId', 'name', 'role', 'pinHash',
+      'pinSalt', 'color', 'points', 'active', 'createdAt', 'failedAttempts',
+      'lockedUntil', 'realName'
     ];
     _schema[CONFIG.SHEET_SESSIONS] = [
       'token', 'kind', 'householdId', 'memberId', 'deviceLabel',

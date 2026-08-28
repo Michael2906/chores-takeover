@@ -95,8 +95,44 @@ var CONFIG = {
     'Yard', 'Pets', 'Trash', 'Vehicle', 'Other'
   ],
 
-  // Point values offered as quick-pick buttons.
+  // Point values offered as quick-pick buttons. Any other number can still be
+  // typed in -- these are shortcuts, not the whole range.
   POINT_PRESETS: [1, 2, 3, 5, 10, 20],
+
+  // Ready-made chores. Picking one fills in the rest of the form, which stays
+  // fully editable -- the suggestion is a starting point, not a template you
+  // are stuck with. Typing a name that is not on this list just fills the form
+  // in by hand as before.
+  //
+  // Add your own freely: title is the only required field.
+  SUGGESTIONS: [
+    { title: 'Load the dishwasher',   category: 'Kitchen',  points: 3,  recurrence: 'daily',   notes: 'Rinse the plates first.' },
+    { title: 'Empty the dishwasher',  category: 'Kitchen',  points: 3,  recurrence: 'daily',   notes: '' },
+    { title: 'Wipe the worktops',     category: 'Kitchen',  points: 2,  recurrence: 'daily',   notes: 'Do not forget the corners.' },
+    { title: 'Sweep the kitchen',     category: 'Kitchen',  points: 3,  recurrence: 'weekly',  notes: '' },
+    { title: 'Take the bins out',     category: 'Trash',    points: 2,  recurrence: 'weekly',  notes: 'Check which bin it is this week.' },
+    { title: 'Clean the bathroom',    category: 'Bathroom', points: 10, recurrence: 'weekly',  notes: 'Sink, toilet, bath, mirror.' },
+    { title: 'Scrub the bathtub',     category: 'Bathroom', points: 8,  recurrence: 'monthly', notes: '' },
+    { title: 'Make your bed',         category: 'Bedroom',  points: 1,  recurrence: 'daily',   notes: '' },
+    { title: 'Tidy your room',        category: 'Bedroom',  points: 5,  recurrence: 'weekly',  notes: 'Floor clear, under the bed as well.' },
+    { title: 'Hoover the front room', category: 'Bedroom',  points: 5,  recurrence: 'weekly',  notes: '' },
+    { title: 'Dust the front room',   category: 'Bedroom',  points: 3,  recurrence: 'weekly',  notes: '' },
+    { title: 'Fold the laundry',      category: 'Laundry',  points: 4,  recurrence: 'weekly',  notes: '' },
+    { title: 'Put your laundry away', category: 'Laundry',  points: 2,  recurrence: 'weekly',  notes: '' },
+    { title: 'Start a load of washing', category: 'Laundry', points: 2, recurrence: '',        notes: '' },
+    { title: 'Mow the lawn',          category: 'Yard',     points: 20, recurrence: 'weekly',  notes: '' },
+    { title: 'Rake the leaves',       category: 'Yard',     points: 10, recurrence: '',        notes: '' },
+    { title: 'Sweep the porch',       category: 'Yard',     points: 5,  recurrence: 'weekly',  notes: '' },
+    { title: 'Water the plants',      category: 'Yard',     points: 2,  recurrence: 'weekly',  notes: '' },
+    { title: 'Feed the pets',         category: 'Pets',     points: 2,  recurrence: 'daily',   notes: '' },
+    { title: 'Walk the dog',          category: 'Pets',     points: 3,  recurrence: 'daily',   notes: '' },
+    { title: 'Clean up after the pets', category: 'Pets',   points: 5,  recurrence: 'weekly',  notes: '' },
+    { title: 'Wash the car',          category: 'Vehicle',  points: 20, recurrence: 'monthly', notes: '' },
+    { title: 'Vacuum the car',        category: 'Vehicle',  points: 10, recurrence: 'monthly', notes: '' },
+    { title: 'Bring the mail in',     category: 'Other',    points: 1,  recurrence: 'daily',   notes: '' },
+    { title: 'Set the table',         category: 'Kitchen',  points: 2,  recurrence: 'daily',   notes: '' },
+    { title: 'Clear the table',       category: 'Kitchen',  points: 2,  recurrence: 'daily',   notes: '' }
+  ],
 
   // A chore nobody has claimed this many days past its due date is flagged.
   STALE_DAYS: 3,

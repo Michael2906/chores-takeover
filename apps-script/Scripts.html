@@ -198,6 +198,7 @@
     chores: [],
     categories: [],
     pointPresets: [],
+    suggestions: [],
     tab: 'community-pool',
     query: ''
   };
@@ -525,6 +526,7 @@
     state.chores = data.chores || [];
     state.categories = data.categories || [];
     state.pointPresets = data.pointPresets || [];
+    state.suggestions = data.suggestions || [];
     renderApp();
     return data;
   }
@@ -539,14 +541,19 @@
     $('chip-name').textContent = me.name || '';
     $('chip-points').textContent = (me.points || 0) + 'p';
 
-    // Only a parent account gets the account-management entries.
-    var canManage = !!me.canApprove;
+    // Managing accounts is the account holder's alone -- a second parent can
+    // approve chores without being able to rename a child or reset a PIN.
+    var isOwner = me.role === 'owner';
     document.querySelectorAll('[data-menu=accounts]').forEach(function (b) {
-      b.hidden = !canManage;
+      b.hidden = !isOwner;
     });
     document.querySelectorAll('[data-menu=password]').forEach(function (b) {
-      b.hidden = me.role !== 'owner';
+      b.hidden = !isOwner;
     });
+
+    // Only parents post chores, so the add button is theirs alone. The server
+    // refuses either way; this stops a child being shown a button that fails.
+    $('new-chore').hidden = !me.canApprove;
 
     renderCounts();
     renderContent();
@@ -579,18 +586,66 @@
     });
   }
 
+  /** The five tabs, in order, with the label each one shows. */
+  function tabList() {
+    return [
+      { id: 'community-pool',     label: 'Community Pool' },
+      { id: 'my-chores',          label: 'My Chores' },
+      { id: 'in-progress',        label: 'In Progress' },
+      { id: 'ready-for-approval', label: 'Ready for Approval' },
+      { id: 'done',               label: 'Done' }
+    ];
+  }
+
   function renderCounts() {
-    ['community-pool', 'my-chores', 'in-progress', 'ready-for-approval', 'done']
-      .forEach(function (id) {
-        var n = choresFor(id).length;
-        var badge = $(id).querySelector('.tab-count');
-        badge.textContent = n;
-        badge.classList.toggle('show', n > 0);
-        // Approvals are the one queue somebody is actively waiting on.
-        badge.classList.toggle(
-          'alert', id === 'ready-for-approval' && n > 0 &&
-                   !!(state.me && state.me.canApprove));
-      });
+    var boss = !!(state.me && state.me.canApprove);
+
+    tabList().forEach(function (t) {
+      var n = choresFor(t.id).length;
+      var badge = $(t.id).querySelector('.tab-count');
+      badge.textContent = n;
+      badge.classList.toggle('show', n > 0);
+      // Approvals are the one queue somebody is actively waiting on.
+      badge.classList.toggle(
+        'alert', t.id === 'ready-for-approval' && n > 0 && boss);
+    });
+
+    renderTabMenu();
+  }
+
+  /**
+   * The narrow-screen dropdown.
+   *
+   * Rebuilt from the same counts as the strip rather than kept in its own
+   * state, so the two can never disagree about which tab is active.
+   */
+  function renderTabMenu() {
+    var current = tabList().filter(function (t) {
+      return t.id === state.tab;
+    })[0] || tabList()[0];
+
+    $('tab-menu-label').textContent = current.label;
+
+    $('tab-menu-list').innerHTML = tabList().map(function (t) {
+      var n = choresFor(t.id).length;
+      return '<button data-goto="' + t.id + '"' +
+             (t.id === state.tab ? ' class="on"' : '') + '>' +
+               '<span>' + esc(t.label) + '</span>' +
+               (n ? '<span class="n">' + n + '</span>' : '') +
+             '</button>';
+    }).join('');
+  }
+
+  /** Moves to a tab from either control. */
+  function selectTab(id) {
+    state.tab = id;
+    document.querySelectorAll('.tab').forEach(function (t) {
+      t.classList.toggle('active', t.id === id);
+      t.setAttribute('aria-selected', String(t.id === id));
+    });
+    renderTabMenu();
+    renderContent();
+    $('content-field').scrollTop = 0;
   }
 
   function matchesQuery(c) {
@@ -730,17 +785,36 @@
   // --- Board interactions -------------------------------------------
 
   function wireApp() {
-    // Tabs
+    // Tabs -- the strip on a wide screen...
     $('tab-strip').addEventListener('click', function (e) {
       var tab = e.target.closest('.tab');
-      if (!tab) return;
-      document.querySelectorAll('.tab').forEach(function (t) {
-        t.classList.toggle('active', t === tab);
-        t.setAttribute('aria-selected', String(t === tab));
-      });
-      state.tab = tab.id;
-      renderContent();
-      $('content-field').scrollTop = 0;
+      if (tab) selectTab(tab.id);
+    });
+
+    // ...and the dropdown on a narrow one.
+    var tabBtn = $('tab-menu-btn');
+    var tabList_ = $('tab-menu-list');
+
+    tabBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var open = tabList_.hidden;
+      tabList_.hidden = !open;
+      tabBtn.setAttribute('aria-expanded', String(open));
+    });
+
+    tabList_.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-goto]');
+      if (!b) return;
+      tabList_.hidden = true;
+      tabBtn.setAttribute('aria-expanded', 'false');
+      selectTab(b.dataset.goto);
+    });
+
+    document.addEventListener('click', function () {
+      if (!tabList_.hidden) {
+        tabList_.hidden = true;
+        tabBtn.setAttribute('aria-expanded', 'false');
+      }
     });
 
     // Search
@@ -950,16 +1024,24 @@
   function choreForm(existing) {
     var editing = !!existing;
     var c = existing || {};
-    var boss = !!(state.me && state.me.canApprove);
 
     var cats = state.categories.map(function (x) {
       return '<option value="' + esc(x) + '"></option>';
     }).join('');
 
+    var chosen = Number(c.points) || 0;
+    var isPreset = state.pointPresets.indexOf(chosen) >= 0 || chosen === 0;
+
     var pts = state.pointPresets.map(function (p) {
       return '<button type="button" class="chip-pick' +
-             (Number(c.points) === p ? ' on' : '') +
+             (chosen === p ? ' on' : '') +
              '" data-points="' + p + '">' + p + 'p</button>';
+    }).join('');
+
+    // Ready-made chores. Picking one fills the rest of the form in; typing
+    // something not on the list just leaves the form to be filled by hand.
+    var suggs = state.suggestions.map(function (x) {
+      return '<option value="' + esc(x.title) + '"></option>';
     }).join('');
 
     var people = state.members.map(function (m) {
@@ -971,9 +1053,16 @@
     openModal(editing ? 'Edit chore' : 'New chore',
       '<form class="form" id="chore-form">' +
         '<label class="field"><span>What needs doing?</span>' +
-          '<input name="title" required maxlength="120" ' +
+          '<input name="title" required maxlength="120" list="sugg-list" ' +
+                 'autocomplete="off" ' +
                  'value="' + esc(c.title || '') + '" ' +
-                 'placeholder="Load the dishwasher" /></label>' +
+                 'placeholder="Pick one, or type your own" />' +
+          '<datalist id="sugg-list">' + suggs + '</datalist>' +
+          '<small id="sugg-hint">' +
+            (state.suggestions.length
+              ? 'Pick a ready-made chore to fill the rest in, or type your own.'
+              : '') +
+          '</small></label>' +
 
         '<label class="field"><span>Details <small>(optional)</small></span>' +
           '<textarea name="notes" maxlength="1000">' + esc(c.notes || '') +
@@ -984,14 +1073,19 @@
                  'value="' + esc(c.category || '') + '" />' +
           '<datalist id="cat-list">' + cats + '</datalist></label>' +
 
-        (boss
-          ? '<div class="field"><span>Points</span>' +
-              '<div class="chips" id="point-chips">' + pts +
-                '<button type="button" class="chip-pick" data-points="0">None</button>' +
-              '</div>' +
-              '<input type="hidden" name="points" value="' +
-                     (Number(c.points) || 0) + '" /></div>'
-          : '<p class="form-hint">A parent sets the points on a chore.</p>') +
+        '<div class="field"><span>Points</span>' +
+          '<div class="chips" id="point-chips">' + pts +
+            '<button type="button" class="chip-pick' +
+              (chosen === 0 ? ' on' : '') + '" data-points="0">None</button>' +
+            '<button type="button" class="chip-pick' +
+              (isPreset ? '' : ' on') + '" data-points="custom">Custom…</button>' +
+          '</div>' +
+          '<input type="number" id="point-custom" name="pointsCustom" ' +
+                 'min="0" max="999" step="1" placeholder="Points" ' +
+                 'value="' + (isPreset ? '' : chosen) + '"' +
+                 (isPreset ? ' hidden' : '') + ' />' +
+          '<input type="hidden" name="points" value="' + chosen + '" />' +
+        '</div>' +
 
         '<label class="field"><span>Due <small>(optional)</small></span>' +
           '<input type="date" name="dueDate" value="' + esc(c.dueDate || '') +
@@ -1009,7 +1103,7 @@
           '<small>A repeating chore reposts itself once approved.</small>' +
         '</label>' +
 
-        (boss && !editing
+        (!editing
           ? '<label class="field"><span>Give it to</span>' +
               '<select name="assigneeId"><option value="">' +
               'Anyone — put it in the pool</option>' + people +
@@ -1030,7 +1124,7 @@
               dueDate: f.dueDate.value,
               recurrence: f.recurrence.value
             };
-            if (f.points) payload.points = Number(f.points.value) || 0;
+            payload.points = Number(f.points.value) || 0;
             if (f.assigneeId) payload.assigneeId = f.assigneeId.value;
 
             busy(btn, true);
@@ -1045,18 +1139,74 @@
           } }
       ]);
 
+    var form = $('chore-form');
     var chips = $('point-chips');
-    if (chips) {
-      chips.addEventListener('click', function (e) {
-        var b = e.target.closest('[data-points]');
-        if (!b) return;
-        chips.querySelectorAll('.chip-pick').forEach(function (x) {
-          x.classList.remove('on');
-        });
-        b.classList.add('on');
-        $('chore-form').points.value = b.dataset.points;
+    var custom = $('point-custom');
+
+    chips.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-points]');
+      if (!b) return;
+
+      chips.querySelectorAll('.chip-pick').forEach(function (x) {
+        x.classList.remove('on');
       });
-    }
+      b.classList.add('on');
+
+      if (b.dataset.points === 'custom') {
+        custom.hidden = false;
+        custom.focus();
+        form.points.value = Number(custom.value) || 0;
+      } else {
+        custom.hidden = true;
+        form.points.value = b.dataset.points;
+      }
+    });
+
+    custom.addEventListener('input', function () {
+      var v = Math.max(0, Math.min(999, Math.round(Number(custom.value) || 0)));
+      form.points.value = v;
+    });
+
+    // Picking a ready-made chore fills the rest of the form in. Everything it
+    // sets stays editable -- it is a starting point, not a template.
+    //
+    // Fires on 'input' rather than 'change' because a datalist pick and a
+    // typed word are the same event; matching the exact title is what tells
+    // them apart. Typing a name that is not on the list changes nothing else.
+    form.title.addEventListener('input', function () {
+      var typed = form.title.value.trim().toLowerCase();
+      var hit = null;
+
+      for (var i = 0; i < state.suggestions.length; i++) {
+        if (String(state.suggestions[i].title).toLowerCase() === typed) {
+          hit = state.suggestions[i];
+          break;
+        }
+      }
+      if (!hit) return;
+
+      form.notes.value = hit.notes || '';
+      form.category.value = hit.category || '';
+      form.recurrence.value = hit.recurrence || '';
+
+      var p = Number(hit.points) || 0;
+      form.points.value = p;
+
+      // Reflect the filled-in value on the chips, choosing Custom when the
+      // suggestion's points are not one of the presets.
+      var preset = state.pointPresets.indexOf(p) >= 0 || p === 0;
+      chips.querySelectorAll('.chip-pick').forEach(function (x) {
+        var on = preset ? Number(x.dataset.points) === p
+                        : x.dataset.points === 'custom';
+        x.classList.toggle('on', on);
+      });
+      custom.hidden = preset;
+      if (!preset) custom.value = p;
+
+      var hint = $('sugg-hint');
+      if (hint) hint.textContent = 'Filled in from “' + hit.title +
+                                   '”. Change anything you like.';
+    });
   }
 
   // --- Give a chore to somebody -------------------------------------
@@ -1122,11 +1272,13 @@
                 : m.canApprove ? 'Parent' : 'Member') +
               (m.hasPin ? ' · has a PIN' : ' · no PIN') +
               ' · ' + (m.points || 0) + 'p' +
+              // Only worth showing when it differs -- otherwise it is noise.
+              (m.realName && m.realName !== m.name
+                ? ' · really ' + esc(m.realName) : '') +
             '</span>' +
           '</span>' +
-          (m.role === 'owner' ? '' :
-            '<button class="btn btn-sm btn-secondary" data-edit="' +
-              esc(m.memberId) + '">Edit</button>') +
+          '<button class="btn btn-sm btn-secondary" data-edit="' +
+            esc(m.memberId) + '">Edit</button>' +
         '</div>';
       }).join('');
     }
@@ -1179,24 +1331,48 @@
 
   function memberForm(m) {
     var len = CONFIG_CLIENT.pinLength;
+    var isOwner = m.role === 'owner';
 
     openModal('Edit ' + esc(m.name),
       '<form class="form" id="member-form">' +
-        '<label class="field"><span>Name</span>' +
-          '<input name="name" value="' + esc(m.name) + '" maxlength="40" /></label>' +
+        '<label class="field"><span>Display name</span>' +
+          '<input name="name" value="' + esc(m.name) + '" maxlength="40" />' +
+          '<small>What everybody sees on the board' +
+            (isOwner ? ' — “Dad” works as well as your own name.' : '.') +
+          '</small></label>' +
+
+        // The account holder's real name is kept on file separately, so the
+        // board can say "Dad" without the account itself losing track of who
+        // it belongs to.
+        (isOwner
+          ? '<label class="field"><span>Real name</span>' +
+              '<input name="realName" value="' + esc(m.realName || m.name) +
+              '" maxlength="40" />' +
+              '<small>Kept on file, never shown on the board.</small></label>'
+          : '') +
+
         '<label class="field"><span>New PIN <small>(' + len +
           ' digits)</small></span>' +
           '<input name="pin" inputmode="numeric" pattern="[0-9]*" maxlength="' +
             len + '" placeholder="' +
             (m.hasPin ? 'Leave blank to keep the current one' : 'No PIN set') +
-            '" /></label>' +
-        '<label class="field"><span>Can they approve chores?</span>' +
-          '<select name="role">' +
-            '<option value="member"' + (m.canApprove ? '' : ' selected') +
-              '>No — they do chores</option>' +
-            '<option value="approver"' + (m.canApprove ? ' selected' : '') +
-              '>Yes — a parent account</option>' +
-          '</select></label>' +
+            '" />' +
+          (isOwner
+            ? '<small>Stops anyone else opening the board as you.</small>'
+            : '') +
+        '</label>' +
+
+        // Role and switching off are meaningless for the account holder --
+        // there is nobody left to hand the household to.
+        (isOwner ? ''
+          : '<label class="field"><span>Can they approve chores?</span>' +
+              '<select name="role">' +
+                '<option value="member"' + (m.canApprove ? '' : ' selected') +
+                  '>No — they do chores</option>' +
+                '<option value="approver"' + (m.canApprove ? ' selected' : '') +
+                  '>Yes — a parent account</option>' +
+              '</select></label>') +
+
         (m.hasPin
           ? '<label class="field" style="flex-direction:row;align-items:center;' +
             'gap:0.5rem"><input type="checkbox" name="clearPin" ' +
@@ -1206,7 +1382,8 @@
       [
         { label: 'Cancel', kind: 'btn-secondary', act: function () {
             accountsForm();
-          } },
+          } }
+      ].concat(isOwner ? [] : [
         { label: 'Turn off', kind: 'btn-danger', act: function () {
             confirmModal('Turn off ' + m.name + '?',
               'They disappear from the name list. Their finished chores stay.',
@@ -1219,28 +1396,38 @@
                     toast('Turned off.', 'good');
                   }).catch(fail);
               }, true);
-          } },
+          } }
+      ]).concat([
         { label: 'Save', kind: 'btn-primary', act: function (btn) {
             var f = $('member-form');
-            var payload = {
-              targetId: m.memberId,
-              name: f.name.value,
-              role: f.role.value,
-              unlock: true
-            };
+            var payload = { targetId: m.memberId, name: f.name.value };
+
+            // Role is absent from the owner's form, so only send it when the
+            // form actually offered it -- otherwise the server would read
+            // undefined as a demotion request and refuse.
+            if (f.role) payload.role = f.role.value;
+            if (f.realName) payload.realName = f.realName.value;
+
             // '' clears the PIN, a value sets it, absent leaves it alone.
             if (f.clearPin && f.clearPin.checked) payload.pin = '';
             else if (f.pin.value.trim()) payload.pin = f.pin.value.trim();
 
+            // Clearing a lockout is a side effect of an edit, which is how a
+            // forgotten PIN gets unstuck.
+            payload.unlock = true;
+
             busy(btn, true);
             api('updateMember', payload).then(function (data) {
               state.members = data.members;
-              renderApp();
+              // The owner may have just renamed themselves, so refresh who
+              // the header thinks is signed in.
+              return refresh();
+            }).then(function () {
               accountsForm();
               toast('Saved.', 'good');
             }).catch(fail).then(function () { busy(btn, false); });
           } }
-      ]);
+      ]));
   }
 
   // --- Change the household password ---------------------------------

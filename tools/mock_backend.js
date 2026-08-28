@@ -25,8 +25,24 @@
   function id(p) { return p + '-' + (++seq); }
   function now() { return new Date().toISOString(); }
 
-  var PALETTE = ['#02407d', '#914a42', '#bba255', '#2e8b74',
-                 '#6a4c93', '#c1683c', '#3d7ea6', '#7a8b3d'];
+  var PALETTE = ['#2f5d8a', '#9c6259', '#c2ab72', '#5f9384',
+                 '#7a6a99', '#c08760', '#5d8aa6', '#8a9463'];
+
+  // A short stand-in for CONFIG.SUGGESTIONS -- enough to exercise the
+  // autofill, not a copy of the whole list.
+  var SUGGESTIONS = [
+    { title: 'Load the dishwasher', category: 'Kitchen', points: 3,
+      recurrence: 'daily', notes: 'Rinse the plates first.' },
+    { title: 'Take the bins out', category: 'Trash', points: 2,
+      recurrence: 'weekly', notes: 'Check which bin it is this week.' },
+    { title: 'Clean the bathroom', category: 'Bathroom', points: 10,
+      recurrence: 'weekly', notes: 'Sink, toilet, bath, mirror.' },
+    { title: 'Mow the lawn', category: 'Yard', points: 20,
+      recurrence: 'weekly', notes: '' },
+    // Deliberately not a preset value, so the Custom chip gets exercised.
+    { title: 'Wash the car', category: 'Vehicle', points: 15,
+      recurrence: 'monthly', notes: '' }
+  ];
 
   // ---------------------------------------------------------------
   // Seed data, so the board can be looked at without ten minutes of typing
@@ -45,7 +61,7 @@
     people.forEach(function (p, i) {
       DB.members.push({
         memberId: id('m'), householdId: h.householdId,
-        name: p[0], role: p[1], pin: p[2],
+        name: p[0], realName: p[0], role: p[1], pin: p[2],
         color: PALETTE[i % PALETTE.length],
         points: [0, 0, 34, 12][i], active: true
       });
@@ -107,7 +123,8 @@
 
   function publicMember(m) {
     return {
-      memberId: m.memberId, name: m.name, role: m.role, color: m.color,
+      memberId: m.memberId, name: m.name, realName: m.realName || m.name,
+      role: m.role, color: m.color,
       points: Number(m.points || 0), hasPin: !!m.pin,
       canApprove: m.role === 'owner' || m.role === 'approver',
       active: m.active !== false
@@ -144,6 +161,14 @@
     var m = requireMember(token);
     if (m.role !== 'owner' && m.role !== 'approver') {
       throw new Error('Only a parent account can do that.');
+    }
+    return m;
+  }
+
+  function requireOwner(token) {
+    var m = requireMember(token);
+    if (m.role !== 'owner') {
+      throw new Error('Only the account holder can manage accounts.');
     }
     return m;
   }
@@ -189,7 +214,8 @@
       chores: mine,
       categories: ['Kitchen', 'Bathroom', 'Bedroom', 'Laundry', 'Yard',
                    'Pets', 'Trash', 'Vehicle', 'Other'],
-      pointPresets: [1, 2, 3, 5, 10, 20]
+      pointPresets: [1, 2, 3, 5, 10, 20],
+      suggestions: SUGGESTIONS
     };
   }
 
@@ -275,7 +301,7 @@
     },
 
     addMember: function (p) {
-      var actor = requireApprover(p.memberToken);
+      var actor = requireOwner(p.memberToken);
       if (!String(p.name || '').trim()) throw new Error('Enter a name.');
       var clash = DB.members.filter(function (m) {
         return m.householdId === actor.householdId && m.active !== false &&
@@ -296,7 +322,7 @@
     },
 
     updateMember: function (p) {
-      var actor = requireApprover(p.memberToken);
+      var actor = requireOwner(p.memberToken);
       var m = find(DB.members, 'memberId', p.targetId);
       if (!m || m.householdId !== actor.householdId)
         throw new Error('That account is not in this household.');
@@ -304,6 +330,9 @@
       if (p.name !== undefined) {
         if (!String(p.name).trim()) throw new Error('A name cannot be blank.');
         m.name = String(p.name).trim();
+      }
+      if (p.realName !== undefined) {
+        m.realName = String(p.realName).trim() || m.name;
       }
       if (p.role !== undefined) {
         if (m.role === 'owner') throw new Error('The account holder always keeps parent access.');
@@ -336,7 +365,7 @@
     loadBoard: function (p) { return board(p.memberToken); },
 
     createChore: function (p) {
-      var me = requireMember(p.memberToken);
+      var me = requireApprover(p.memberToken);
       if (!String(p.title || '').trim()) throw new Error('Give the chore a name.');
       var boss = me.role === 'owner' || me.role === 'approver';
       var assignee = (p.assigneeId && boss) ? p.assigneeId : '';
@@ -355,7 +384,7 @@
     },
 
     updateChore: function (p) {
-      var me = requireMember(p.memberToken);
+      var me = requireApprover(p.memberToken);
       var c = ownChore(me.householdId, p.choreId);
       var boss = me.role === 'owner' || me.role === 'approver';
       if (!boss && (c.createdBy !== me.memberId || c.status !== 'pool'))
@@ -374,7 +403,7 @@
     },
 
     deleteChore: function (p) {
-      var me = requireMember(p.memberToken);
+      var me = requireApprover(p.memberToken);
       var c = ownChore(me.householdId, p.choreId);
       var boss = me.role === 'owner' || me.role === 'approver';
       if (!boss && (c.createdBy !== me.memberId || c.status !== 'pool'))
