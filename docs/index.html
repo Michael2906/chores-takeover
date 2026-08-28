@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Chore Boar</title>
+    <meta name="theme-color" content="#2ecfb4" />
+    <meta name="description" content="Somebody has to do it." />
+
+    <link rel="icon" href="./icon.png" />
+    <link rel="apple-touch-icon" href="./icon.png" />
+    <meta name="apple-mobile-web-app-title" content="Chore Boar" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+
+    <!-- A private family board has no business in a search index. -->
+    <meta name="robots" content="noindex, nofollow" />
+
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: #545454;
+        overflow: hidden;
+      }
+      iframe {
+        display: block;
+        border: 0;
+        width: 100%;
+        height: 100%;
+      }
+      #fallback {
+        display: none;
+        font: 16px/1.5 Arial, Helvetica, sans-serif;
+        color: #d0d0d0;
+        padding: 2rem;
+        text-align: center;
+      }
+      #fallback a { color: #2ecfb4; }
+    </style>
+  </head>
+
+  <body>
+    <!--
+      This page exists for exactly one reason: to own the sign-in tokens.
+
+      Apps Script serves the app from a *.googleusercontent.com frame. Framed
+      under this domain that frame is third-party, and Safari refuses to let
+      third-party frames keep localStorage -- which is why the cloaked
+      forwarding this replaces asked for the password on every single visit.
+
+      This page is first-party at thechoreboar.fyi, so ITS storage is honoured.
+      It holds the tokens and hands them to the app over postMessage, which is
+      not storage-gated. Nothing else here is load-bearing.
+    -->
+    <iframe id="app"
+            title="Chore Boar"
+            allow="clipboard-write"
+            src="https://script.google.com/macros/s/AKfycbwO_tiMhOD7_LVi66_XZSDgm9bodOnso_EvB_fskJQoPkJattag_dMozAnvQi4_8nOB/exec"></iframe>
+
+    <noscript>
+      <p id="fallback" style="display:block">
+        Chore Boar needs JavaScript.
+      </p>
+    </noscript>
+
+    <script>
+      (function () {
+        'use strict';
+
+        var KEY_H = 'cb.householdToken';
+        var KEY_M = 'cb.memberToken';
+
+        // Only Google's own origins may ask for or set the tokens. Without
+        // this, any page that managed to get a frame in here could ask for a
+        // live session and be handed one.
+        function allowed(origin) {
+          return origin === 'https://script.google.com' ||
+                 /^https:\/\/[a-z0-9-]+\.googleusercontent\.com$/.test(origin);
+        }
+
+        function read(k) {
+          try { return window.localStorage.getItem(k) || ''; }
+          catch (e) { return ''; }
+        }
+
+        function write(k, v) {
+          try {
+            if (v) window.localStorage.setItem(k, v);
+            else window.localStorage.removeItem(k);
+          } catch (e) { /* private mode: the app degrades on its own */ }
+        }
+
+        window.addEventListener('message', function (e) {
+          if (!allowed(e.origin) || !e.data || typeof e.data !== 'object') return;
+          if (!e.source) return;
+
+          if (e.data.cb === 'hello') {
+            // Reply to the frame that asked, at its own origin -- never '*',
+            // which would broadcast a live session to anything listening.
+            e.source.postMessage({
+              cb: 'tokens',
+              household: read(KEY_H),
+              member: read(KEY_M)
+            }, e.origin);
+
+          } else if (e.data.cb === 'save') {
+            write(KEY_H, String(e.data.household || ''));
+            write(KEY_M, String(e.data.member || ''));
+          }
+        });
+      })();
+    </script>
+  </body>
+</html>

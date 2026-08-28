@@ -67,6 +67,25 @@ var CONFIG = {
   HASH_ITERATIONS: 2000,
 
   // ---------------------------------------------------------------------
+  // The wrapper page at your own domain
+  // ---------------------------------------------------------------------
+
+  // Apps Script cannot be given a custom domain, so thechoreboar.fyi serves a
+  // small wrapper page (docs/index.html, hosted on GitHub Pages) that frames
+  // this app. The wrapper exists to hold the sign-in tokens: inside it this
+  // app is a third-party frame, and Safari will not let a third-party frame
+  // keep localStorage -- which is why plain cloaked forwarding asked for the
+  // password on every visit.
+  //
+  // THIS IS AN ALLOW-LIST OF WHO MAY BE HANDED A LIVE SESSION. Only add an
+  // origin you control. A wrong entry here lets that site take over accounts.
+  // Origins only -- scheme and host, no trailing slash, no path.
+  WRAPPER_ORIGINS: [
+    'https://thechoreboar.fyi',
+    'https://www.thechoreboar.fyi'
+  ],
+
+  // ---------------------------------------------------------------------
   // Chores
   // ---------------------------------------------------------------------
 

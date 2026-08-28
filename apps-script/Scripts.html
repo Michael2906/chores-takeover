@@ -48,14 +48,108 @@
     };
   })();
 
+  /**
+   * The bridge to the wrapper page at the custom domain.
+   *
+   * Apps Script serves this app from a *.googleusercontent.com frame. Framed
+   * again under thechoreboar.fyi, that frame is third-party and Safari will
+   * not let it keep localStorage -- measured, not guessed: cloaked forwarding
+   * asked for the password on every visit.
+   *
+   * So when we are inside our own wrapper, the wrapper holds the tokens in
+   * ITS first-party storage and we talk to it over postMessage, which is not
+   * storage-gated. Opened directly at the /exec URL there is no wrapper, and
+   * localStorage is used exactly as before.
+   */
+  var bridge = { ready: false, win: null, origin: null };
+
+  var cache = { household: '', member: '' };
+
   var TOKENS = {
-    get household() { return store.get('cb.householdToken') || ''; },
-    set household(v) { v ? store.set('cb.householdToken', v)
-                         : store.del('cb.householdToken'); },
-    get member() { return store.get('cb.memberToken') || ''; },
-    set member(v) { v ? store.set('cb.memberToken', v)
-                      : store.del('cb.memberToken'); }
+    get household() { return cache.household; },
+    set household(v) { cache.household = v || ''; persistTokens(); },
+    get member() { return cache.member; },
+    set member(v) { cache.member = v || ''; persistTokens(); }
   };
+
+  function persistTokens() {
+    if (bridge.ready) {
+      bridge.win.postMessage({
+        cb: 'save',
+        household: cache.household,
+        member: cache.member
+      }, bridge.origin);
+      return;
+    }
+    cache.household ? store.set('cb.householdToken', cache.household)
+                    : store.del('cb.householdToken');
+    cache.member ? store.set('cb.memberToken', cache.member)
+                 : store.del('cb.memberToken');
+  }
+
+  /** Origins we will hand a live session to. Nothing else, ever. */
+  function trustedWrapper(origin) {
+    for (var i = 0; i < CONFIG_CLIENT.wrapperOrigins.length; i++) {
+      if (CONFIG_CLIENT.wrapperOrigins[i] === origin) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Loads the tokens, then calls done().
+   *
+   * Asks the wrapper first and waits briefly; falls back to localStorage if
+   * there is no wrapper or it does not answer. Either way done() runs exactly
+   * once, so a silent wrapper delays start-up rather than hanging it.
+   */
+  function loadTokens(done) {
+    function fromStore() {
+      cache.household = store.get('cb.householdToken') || '';
+      cache.member = store.get('cb.memberToken') || '';
+    }
+
+    // Not framed: nothing to talk to.
+    if (window.top === window.self) { fromStore(); done(); return; }
+
+    var settled = false;
+    var finish = function () {
+      if (settled) return;
+      settled = true;
+      window.removeEventListener('message', onMessage);
+      done();
+    };
+
+    function onMessage(e) {
+      if (settled) return;
+      if (!trustedWrapper(e.origin) || !e.data || e.data.cb !== 'tokens') return;
+
+      bridge.ready = true;
+      bridge.win = e.source;
+      bridge.origin = e.origin;
+      cache.household = String(e.data.household || '');
+      cache.member = String(e.data.member || '');
+      finish();
+    }
+
+    window.addEventListener('message', onMessage);
+
+    // '*' only for this opening hello, which carries nothing. Every reply is
+    // checked against the allow-list before we trust it, and every token we
+    // send afterwards goes to that verified origin by name.
+    try {
+      window.top.postMessage({ cb: 'hello' }, '*');
+    } catch (err) {
+      fromStore(); finish(); return;
+    }
+
+    setTimeout(function () {
+      if (settled) return;
+      // Framed by something that is not our wrapper -- an unmasked deployment
+      // in an iframe, say. Behave as before.
+      fromStore();
+      finish();
+    }, 900);
+  }
 
   // -----------------------------------------------------------------
   // Talking to the server
@@ -1198,14 +1292,21 @@
     wireGate();
     wirePicker();
     wireApp();
-    boot();
 
-    if (!store.durable) {
-      // Worth saying out loud rather than letting it look like a bug.
-      setTimeout(function () {
-        toast('This browser will not remember you between visits.');
-      }, 1200);
-    }
+    // Tokens first: boot() decides which screen to show from them, so asking
+    // the wrapper afterwards would flash the sign-in form at somebody who is
+    // already signed in.
+    loadTokens(function () {
+      boot();
+
+      // The wrapper's storage is what counts when there is a wrapper, so only
+      // complain about this frame's storage when we are relying on it.
+      if (!bridge.ready && !store.durable) {
+        setTimeout(function () {
+          toast('This browser will not remember you between visits.');
+        }, 1200);
+      }
+    });
   });
 })();
 </script>

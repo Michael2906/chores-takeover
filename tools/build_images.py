@@ -54,6 +54,39 @@ def encode(path, width):
     )
 
 
+def build_icon(src_dir):
+    """Square home-screen icon for the wrapper page at thechoreboar.fyi.
+
+    The logo is wide (roughly 2:1), so it is centred on the header's teal
+    rather than stretched. iOS does not honour transparency on a home-screen
+    icon -- it composites it onto black -- so the background is painted in.
+    """
+    path = os.path.join(src_dir, ART["LOGO"][0])
+    im = Image.open(path).convert("RGBA")
+    box = im.getbbox()
+    if box:
+        im = im.crop(box)
+
+    size, pad = 180, 18
+    inner = size - pad * 2
+    w = inner
+    h = max(1, round(im.height * w / im.width))
+    if h > inner:
+        h = inner
+        w = max(1, round(im.width * h / im.height))
+    im = im.resize((w, h), Image.LANCZOS)
+
+    canvas = Image.new("RGBA", (size, size), (46, 207, 180, 255))  # --quaternary
+    canvas.paste(im, ((size - w) // 2, (size - h) // 2), im)
+
+    out_dir = os.path.join(ROOT, "docs")
+    os.makedirs(out_dir, exist_ok=True)
+    out = os.path.join(out_dir, "icon.png")
+    canvas.convert("RGB").save(out, format="PNG", optimize=True)
+    print("%-6s %-28s %4dx%-4d  %6.1f KB"
+          % ("ICON", "docs/icon.png", size, size, os.path.getsize(out) / 1024))
+
+
 def main():
     src_dir = os.path.join(ROOT, "images")
     out_path = os.path.join(ROOT, "apps-script", "Images.html")
@@ -87,6 +120,8 @@ def main():
 
     with io.open(out_path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write("\n".join(lines) + "\n")
+
+    build_icon(src_dir)
 
     print("\nWrote %s (%.1f KB)" % (
         os.path.relpath(out_path, ROOT), os.path.getsize(out_path) / 1024))

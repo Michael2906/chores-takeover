@@ -186,7 +186,8 @@
       var CONFIG_CLIENT = {
         appName: <?!= JSON.stringify(config.appName) ?>,
         pinLength: <?!= Number(config.pinLength) ?>,
-        minPassword: <?!= Number(config.minPassword) ?>
+        minPassword: <?!= Number(config.minPassword) ?>,
+        wrapperOrigins: <?!= JSON.stringify(config.wrapperOrigins) ?>
       };
     </script>
     <?!= include('Scripts'); ?>

@@ -101,26 +101,57 @@ Purely housekeeping — expired tokens are rejected either way.
 
 ---
 
-## Using your own domain
+## thechoreboar.fyi
 
 Apps Script web apps **cannot be given a custom domain**. The URL is always
-`script.google.com/macros/s/…/exec`. To put your own name in front of it:
+`script.google.com/macros/s/…/exec`.
 
-1. Register the domain (~$6–12/yr; that is the only cost).
-2. Set up **URL forwarding with masking** at the registrar, pointing at the
-   `/exec` URL. Free at Porkbun and Namecheap. Cloudflare Registrar is the
-   cheapest domain but does unmasked redirects only.
+The obvious answer — the registrar's own "masked forwarding" — was tried and
+**does not work**. It frames the app under your domain, which makes the
+`googleusercontent.com` frame that holds the sign-in tokens third-party, and
+Safari refuses to let a third-party frame keep `localStorage`. Measured, not
+guessed: it asked for the password on **every single visit**.
 
-`doGet` already sets `XFrameOptionsMode.ALLOWALL`, which is what lets the
-masked frame work.
+So `docs/` holds our own wrapper instead, served by GitHub Pages at the
+domain. It exists for one reason: it is first-party at `thechoreboar.fyi`, so
+*its* storage is honoured. It keeps the tokens and hands them to the app over
+`postMessage`, which is not storage-gated.
 
-One caveat: inside a frame the app is third-party, and **Safari blocks
-third-party storage**. Those visitors get asked to sign in every visit rather
-than a broken app — the client falls back to memory and says so.
+```
+thechoreboar.fyi   <- the wrapper. Holds the tokens. (GitHub Pages, free)
+      | postMessage
+script.google.com  <- Apps Script
+      |
+*.googleusercontent.com   <- the app. Storage here is blocked; unused.
+```
 
-If you ever want the domain to be the real address with no frame, that means
-moving off Apps Script (Firebase Hosting is the natural next step). The front
-end would port; the `.gs` backend would need rewriting.
+Opened directly at the `/exec` URL there is no wrapper and `localStorage` is
+used exactly as before, so both routes work.
+
+### Setting it up
+
+1. **GitHub → Settings → Pages**, source **Deploy from a branch**, branch
+   `main`, folder **`/docs`**.
+2. **Custom domain:** `thechoreboar.fyi`. Tick **Enforce HTTPS** once the
+   certificate is issued (can take a few minutes).
+3. At Porkbun, **delete any URL forwarding** and add DNS records instead:
+
+   | Type | Host | Value |
+   | --- | --- | --- |
+   | ALIAS/ANAME | (blank) | `michael2906.github.io` |
+   | CNAME | `www` | `michael2906.github.io` |
+
+   If ALIAS is unavailable, use four A records to `185.199.108.153`,
+   `185.199.109.153`, `185.199.110.153`, `185.199.111.153`.
+
+### Two things to keep in step
+
+- **`docs/index.html` hardcodes the `/exec` URL.** If that URL ever changes,
+  update it there too. It only changes if you use *New deployment* instead of
+  *Manage deployments > New version*.
+- **`CONFIG.WRAPPER_ORIGINS` is an allow-list of who may be handed a live
+  session.** Only put origins you control in it. A wrong entry lets that site
+  take over accounts.
 
 ---
 
@@ -145,7 +176,7 @@ exactly that or the page will not build.
 
 | File | What it does |
 | --- | --- |
-| `preview.py` | Renders the templates into `build/preview.html` so you can click through the interface without deploying. |
+| `preview.py` | Renders the templates into `build/preview.html`, plus `build/wrapper.html` for testing the custom-domain bridge. |
 | `mock_backend.js` | A small in-memory stand-in for `google.script.run`, used only by the preview. |
 | `build_images.py` | Rebuilds `Images.html` from `/images`. Run after changing the logo. |
 
@@ -162,6 +193,19 @@ Then open `build/preview.html`, or serve it:
 Demo sign-in is `demo@example.com` / `password123`; PINs are Sarah `1234`,
 Ellie `1111`. The preview is fake data in memory — nothing it does touches the
 real spreadsheet.
+
+To exercise the wrapper bridge, serve the same folder on a **second** port and
+open the wrapper from that one:
+
+```bash
+.venv/Scripts/python -m http.server -d build 8778
+```
+
+`http://localhost:8778/wrapper.html` frames the app from `:8777`. Two ports on
+purpose — same-origin would let the app's own `localStorage` quietly stand in
+for the bridge, which is the one thing the test needs to rule out. With them
+split, tokens appearing in `:8778`'s store and **not** `:8777`'s is proof the
+bridge carried them.
 
 ---
 

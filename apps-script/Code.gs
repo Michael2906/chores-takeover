@@ -24,7 +24,8 @@ function doGet(e) {
     appName:  CONFIG.APP_NAME,
     tagline:  CONFIG.TAGLINE,
     pinLength: CONFIG.PIN_LENGTH,
-    minPassword: CONFIG.MIN_PASSWORD
+    minPassword: CONFIG.MIN_PASSWORD,
+    wrapperOrigins: CONFIG.WRAPPER_ORIGINS || []
   };
   return template.evaluate()
     .setTitle(CONFIG.APP_NAME)

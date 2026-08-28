@@ -12,6 +12,7 @@ where it differs. Nothing in tools/ is ever pushed to Apps Script.
 """
 
 import io
+import json
 import os
 import re
 
@@ -19,6 +20,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 SRC = os.path.join(ROOT, "apps-script")
 OUT = os.path.join(ROOT, "build", "preview.html")
+WRAP_OUT = os.path.join(ROOT, "build", "wrapper.html")
+
+# The preview serves the app on 8777. The wrapper test page is served from a
+# SECOND port on purpose: same-origin would let the app's own localStorage
+# stand in for the bridge, and the whole point of the wrapper is what happens
+# when those two origins are different -- as they are in production.
+PREVIEW_ORIGIN = "http://localhost:8777"
+PREVIEW_WRAPPER_ORIGIN = "http://localhost:8778"
 
 
 def read(path):
@@ -37,11 +46,23 @@ def config_values():
         m = re.search(r"^\s*%s:\s*(\d+)" % key, text, re.M)
         return m.group(1) if m else default
 
+    # WRAPPER_ORIGINS: [ 'https://a', 'https://b' ]
+    origins = []
+    m = re.search(r"WRAPPER_ORIGINS:\s*\[(.*?)\]", text, re.S)
+    if m:
+        origins = re.findall(r"'([^']+)'", m.group(1))
+
+    # The preview serves both pages from localhost, so the real allow-list
+    # would (correctly) reject the test wrapper. Add localhost for the preview
+    # only -- this never reaches Config.gs or the deployed app.
+    origins = origins + [PREVIEW_ORIGIN, PREVIEW_WRAPPER_ORIGIN]
+
     return {
         "appName": grab("APP_NAME", "Chore Boar"),
         "tagline": grab("TAGLINE", ""),
         "pinLength": grab("PIN_LENGTH", "4"),
         "minPassword": grab("MIN_PASSWORD", "8"),
+        "wrapperOrigins": origins,
     }
 
 
@@ -61,7 +82,7 @@ def render():
 
         j = re.match(r"JSON\.stringify\(config\.(\w+)\)$", expr)
         if j:
-            return '"%s"' % cfg.get(j.group(1), "").replace('"', '\\"')
+            return json.dumps(cfg.get(j.group(1), ""))
 
         n = re.match(r"Number\(config\.(\w+)\)$", expr)
         if n:
@@ -87,8 +108,36 @@ def render():
         'text-align:center">LOCAL PREVIEW — fake data. '
         'demo@example.com / password123 · PINs: Sarah 1234, Ellie 1111</div>'
     )
+    # Preview-only: #autofill drives the REAL sign-in form, so the client path
+    # under test (form submit -> api -> TOKENS setter -> the wrapper bridge) is
+    # the shipping one. Only the typing is automated. Needed because the
+    # cross-origin wrapper test cannot reach into the frame to click.
+    autofill = """
+<script>
+(function () {
+  if (location.hash.indexOf('autofill') < 0) return;
+  document.addEventListener('DOMContentLoaded', function () {
+    var tries = 0;
+    var go = setInterval(function () {
+      var gate = document.getElementById('gate');
+      var f = document.getElementById('form-signin');
+      if (gate && !gate.hidden && f) {
+        clearInterval(go);
+        f.email.value = 'demo@example.com';
+        f.password.value = 'password123';
+        f.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));
+      } else if (++tries > 60) {
+        clearInterval(go);
+      }
+    }, 100);
+  });
+})();
+</script>
+"""
+
     html = html.replace(
-        "</body>", banner + "\n<script>\n" + mock + "\n</script>\n</body>")
+        "</body>",
+        banner + "\n<script>\n" + mock + "\n</script>\n" + autofill + "</body>")
 
     # The mock must be defined before Scripts.html's DOMContentLoaded fires;
     # putting it last in <body> is enough, but move it ahead of the app script
@@ -97,9 +146,41 @@ def render():
     with io.open(OUT, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(html)
 
+    build_wrapper()
+
     print("Wrote %s (%.1f KB)" % (
         os.path.relpath(OUT, ROOT), os.path.getsize(OUT) / 1024))
+    print("Wrote %s (%.1f KB)" % (
+        os.path.relpath(WRAP_OUT, ROOT), os.path.getsize(WRAP_OUT) / 1024))
     print("Open it, or run:  .venv/Scripts/python -m http.server -d build 8777")
+
+
+def build_wrapper():
+    """The real docs/index.html, retargeted at the preview.
+
+    Only two things change -- what it frames, and which origin it will talk to
+    -- so what gets exercised here is the wrapper that actually ships, not a
+    re-implementation of it that could drift.
+    """
+    html = read(os.path.join(ROOT, "docs", "index.html"))
+
+    html = re.sub(r'src="https://script\.google\.com/[^"]*"',
+                  'src="%s/preview.html#autofill"' % PREVIEW_ORIGIN, html)
+
+    before = html
+    html = html.replace(
+        "return origin === 'https://script.google.com' ||",
+        "return origin === %s ||\n"
+        "                 origin === 'https://script.google.com' ||"
+        % json.dumps(PREVIEW_ORIGIN))
+    if html == before:
+        raise SystemExit("build_wrapper: allow-list line in docs/index.html moved")
+
+    html = html.replace("<title>Chore Boar</title>",
+                        "<title>Chore Boar (wrapper preview)</title>")
+
+    with io.open(WRAP_OUT, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(html)
 
 
 if __name__ == "__main__":
