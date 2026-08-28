@@ -141,7 +141,20 @@ function removeTroughItem(payload) {
  * Returns the number of chores written.
  */
 function fillTroughFor(householdId, actorId) {
-  var items = troughItems(householdId);
+  var all = findAll(CONFIG.SHEET_CHORES, { householdId: householdId });
+
+  // A chore nobody finished is still owed. Handing the same one out again
+  // would leave two of it on the board and let somebody else do work that
+  // was deliberately given to a particular person -- so the outstanding one
+  // simply stays where it is, and this item sits out tonight.
+  var outstanding = {};
+  all.forEach(function (c) {
+    if (c.troughId && c.status !== STATUS.DONE) outstanding[c.troughId] = true;
+  });
+
+  var items = troughItems(householdId).filter(function (i) {
+    return !outstanding[i.troughId];
+  });
   if (!items.length) return 0;
 
   var people = findAll(CONFIG.SHEET_MEMBERS, { householdId: householdId })
@@ -149,6 +162,7 @@ function fillTroughFor(householdId, actorId) {
   if (!people.length) return 0;
 
   var today = todayStr();
+  var nextRef = refAllocator(householdId);
   var plan = planTrough(items, people, yesterdayAssignments(householdId));
 
   plan.forEach(function (row) {
@@ -172,7 +186,9 @@ function fillTroughFor(householdId, actorId) {
       recurrence: '',
       reviewNote: '',
       troughId: row.item.troughId,
-      styId: ''
+      styId: '',
+      ref: nextRef(),
+      seriesId: ''
     });
   });
 

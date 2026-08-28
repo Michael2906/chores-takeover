@@ -27,6 +27,9 @@
 
   var seq = 0;
   function id(p) { return p + '-' + (++seq); }
+
+  var refSeq = 0;
+  function nextRef() { return ++refSeq; }
   function now() { return new Date().toISOString(); }
 
   var PALETTE = ['#2f5d8a', '#9c6259', '#c2ab72', '#5f9384',
@@ -64,7 +67,8 @@
   // ---------------------------------------------------------------
   function seed() {
     var h = { householdId: id('h'), name: 'The Sewells',
-              ownerEmail: 'demo@example.com', password: 'password123' };
+              ownerEmail: 'demo@example.com', password: 'password123',
+              lastFilledOn: '' };
     DB.households.push(h);
 
     var people = [
@@ -103,6 +107,7 @@
     ].forEach(function (r) {
       var assignee = r[5] === '' ? '' : m[r[5]].memberId;
       DB.chores.push({
+        ref: nextRef(),
         choreId: id('c'), householdId: h.householdId,
         title: r[0], notes: r[1], category: r[2], points: r[3],
         status: r[4], createdBy: m[0].memberId, createdAt: now(),
@@ -118,6 +123,7 @@
 
     // One chore that was sent back, to exercise that card state.
     DB.chores.push({
+      ref: nextRef(),
       choreId: id('c'), householdId: h.householdId,
       title: 'Wipe the worktops', notes: '', category: 'Kitchen', points: 4,
       status: 'in_progress', createdBy: m[0].memberId, createdAt: now(),
@@ -289,7 +295,11 @@
     var cr = c.createdBy ? find(DB.members, 'memberId', c.createdBy) : null;
     var ap = c.approvedBy ? find(DB.members, 'memberId', c.approvedBy) : null;
     return {
-      choreId: c.choreId, title: c.title, notes: c.notes || '',
+      choreId: c.choreId,
+      ref: Number(c.ref || 0),
+      seriesId: c.seriesId || '',
+      source: c.troughId ? 'trough' : (c.styId ? 'sty' : 'pool'),
+      title: c.title, notes: c.notes || '',
       category: c.category || '', points: Number(c.points || 0),
       status: c.status, dueDate: c.dueDate || '', recurrence: c.recurrence || '',
       reviewNote: c.reviewNote || '', createdAt: c.createdAt,
@@ -469,8 +479,10 @@
       if (!String(p.title || '').trim()) throw new Error('Give the chore a name.');
       var boss = me.role === 'owner' || me.role === 'approver';
       var assignee = (p.assigneeId && boss) ? p.assigneeId : '';
+      var cid = id('c');
       DB.chores.push({
-        choreId: id('c'), householdId: me.householdId,
+        ref: nextRef(), seriesId: p.recurrence ? cid : '',
+        choreId: cid, householdId: me.householdId,
         title: String(p.title).trim(), notes: p.notes || '',
         category: p.category || '',
         points: boss ? Math.max(0, Number(p.points) || 0) : 0,
@@ -530,6 +542,11 @@
       var c = ownChore(me.householdId, p.choreId);
       var boss = me.role === 'owner' || me.role === 'approver';
       if (c.assigneeId !== me.memberId && !boss) throw new Error('That is not your chore.');
+      if (c.troughId || c.styId) {
+        throw new Error(c.troughId
+          ? 'Trough chores stay with the person they went to. A parent can hand it to somebody else.'
+          : "Sty chores are each person's own. A parent can hand it to somebody else.");
+      }
       c.status = 'pool'; c.assigneeId = ''; c.claimedAt = '';
       c.startedAt = ''; c.submittedAt = '';
       return board(p.memberToken);
@@ -571,21 +588,7 @@
         var w = find(DB.members, 'memberId', c.assigneeId);
         if (w) w.points = Number(w.points || 0) + Number(c.points);
       }
-      if (c.recurrence) {
-        var d = new Date();
-        if (c.recurrence === 'daily') d.setDate(d.getDate() + 1);
-        else if (c.recurrence === 'weekly') d.setDate(d.getDate() + 7);
-        else d.setMonth(d.getMonth() + 1);
-        DB.chores.push({
-          choreId: id('c'), householdId: c.householdId, title: c.title,
-          notes: c.notes, category: c.category, points: c.points,
-          status: 'pool', createdBy: c.createdBy, createdAt: now(),
-          assigneeId: '', claimedAt: '', startedAt: '', submittedAt: '',
-          approvedBy: '', approvedAt: '',
-          dueDate: d.toISOString().slice(0, 10),
-          recurrence: c.recurrence, reviewNote: ''
-        });
-      }
+      // Repeating chores are posted by the nightly job, not on approval.
       return board(p.memberToken);
     },
 
@@ -877,14 +880,29 @@
    * window.MOCK_NIGHTLY() in the console runs a "midnight".
    */
   window.MOCK_NIGHTLY = function () {
-    var already = DB.chores.filter(function (c) {
-      return (c.troughId || c.styId) && c.dueDate === today();
-    });
-    if (already.length) return { skipped: true, existing: already.length };
-
     var h = DB.households[0];
+    if (h.lastFilledOn === today()) return { skipped: true };
+
     var people = DB.members.filter(function (m) {
       return m.householdId === h.householdId && m.active !== false;
+    });
+
+    // Anything still owed keeps its holder and blocks a fresh copy.
+    var troughOpen = {}, styOwed = {}, seriesOpen = {}, seriesLast = {};
+    DB.chores.forEach(function (c) {
+      if (c.troughId && c.status !== 'done') troughOpen[c.troughId] = true;
+      if (c.styId && c.assigneeId && c.status !== 'done') {
+        styOwed[c.assigneeId + '|' + c.styId] = true;
+      }
+      if (c.seriesId && c.recurrence) {
+        if (c.status !== 'done') seriesOpen[c.seriesId] = true;
+        else {
+          var prev = seriesLast[c.seriesId];
+          if (!prev || seriesDate(c) > seriesDate(prev)) {
+            seriesLast[c.seriesId] = c;
+          }
+        }
+      }
     });
 
     var recent = {};
@@ -895,22 +913,66 @@
       }
     });
 
-    var n = 0;
-    planTrough(DB.trough, people, recent).forEach(function (row) {
+    var n = 0, carried = 0;
+
+    var items = DB.trough.filter(function (i) {
+      if (troughOpen[i.troughId]) { carried++; return false; }
+      return true;
+    });
+    planTrough(items, people, recent).forEach(function (row) {
       DB.chores.push(mkChore(h, row.item, row.member, row.item.troughId, ''));
       n++;
     });
+
     people.forEach(function (m) {
       DB.sty.forEach(function (item) {
+        if (styOwed[m.memberId + '|' + item.styId]) { carried++; return; }
         DB.chores.push(mkChore(h, item, m, '', item.styId));
         n++;
       });
     });
-    return { filled: n };
+
+    var reposted = 0;
+    Object.keys(seriesLast).forEach(function (sid) {
+      if (seriesOpen[sid]) return;
+      var last = seriesLast[sid];
+      var days = last.recurrence === 'daily' ? 1
+               : last.recurrence === 'weekly' ? 7
+               : last.recurrence === 'monthly' ? 30 : 0;
+      if (!days) return;
+      var base = new Date(seriesDate(last) + 'T12:00:00');
+      base.setDate(base.getDate() + days);
+      var due = base.getFullYear() + '-' +
+                String(base.getMonth() + 1).padStart(2, '0') + '-' +
+                String(base.getDate()).padStart(2, '0');
+      if (due > today()) return;
+
+      DB.chores.push({
+        ref: nextRef(), seriesId: sid,
+        choreId: id('c'), householdId: h.householdId, title: last.title,
+        notes: last.notes || '', category: last.category || '',
+        points: last.points, status: 'pool', createdBy: last.createdBy || '',
+        createdAt: now(), assigneeId: '', claimedAt: '', startedAt: '',
+        submittedAt: '', approvedBy: '', approvedAt: '', dueDate: today(),
+        recurrence: last.recurrence, reviewNote: '', troughId: '', styId: ''
+      });
+      n++; reposted++;
+    });
+
+    h.lastFilledOn = today();
+    return { filled: n, carriedOver: carried, reposted: reposted };
   };
+
+  /** Mirrors seriesDate() in Daily.gs. */
+  function seriesDate(c) {
+    var d = String(c.dueDate || '').slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+    return String(c.approvedAt || c.createdAt || '').slice(0, 10);
+  }
 
   function mkChore(h, item, member, troughId, styId) {
     return {
+      ref: nextRef(), seriesId: '',
       choreId: id('c'), householdId: h.householdId, title: item.title,
       notes: item.notes || '', category: item.category || '',
       points: item.points, status: 'claimed', createdBy: '', createdAt: now(),

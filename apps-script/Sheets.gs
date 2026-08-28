@@ -29,7 +29,7 @@ function schema(name) {
     _schema = {};
     _schema[CONFIG.SHEET_HOUSEHOLDS] = [
       'householdId', 'name', 'ownerEmail', 'passwordHash', 'passwordSalt',
-      'createdAt', 'failedAttempts', 'lockedUntil'
+      'createdAt', 'failedAttempts', 'lockedUntil', 'lastFilledOn'
     ];
     // NEW COLUMNS GO ON THE END. The header row is positional, so inserting
     // one in the middle would shift every value in an existing sheet by one
@@ -49,7 +49,7 @@ function schema(name) {
       'choreId', 'householdId', 'title', 'notes', 'category', 'points',
       'status', 'createdBy', 'createdAt', 'assigneeId', 'claimedAt',
       'startedAt', 'submittedAt', 'approvedBy', 'approvedAt', 'dueDate',
-      'recurrence', 'reviewNote', 'troughId', 'styId'
+      'recurrence', 'reviewNote', 'troughId', 'styId', 'ref', 'seriesId'
     ];
     // The daily list itself -- templates, not chores. Filling the trough
     // copies these into real Chores rows.

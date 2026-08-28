@@ -62,20 +62,26 @@ function fillDayFor(householdId, today) {
   var lock = LockService.getScriptLock();
   lock.waitLock(30000);
   try {
-    // Re-check inside the lock. This is the whole safety net: whatever else
-    // happens -- a retry, an overlapping manual run, a trigger that fires
-    // twice -- nobody gets two sets of chores for one day.
-    var already = findAll(CONFIG.SHEET_CHORES, { householdId: householdId })
-      .filter(function (c) {
-        return (c.troughId || c.styId) &&
-               String(c.dueDate).slice(0, 10) === today;
-      });
-    if (already.length) return null;
+    var h = findOne(CONFIG.SHEET_HOUSEHOLDS, { householdId: householdId });
+    if (!h) return null;
+
+    // Read the marker INSIDE the lock. This is the whole safety net: a retry,
+    // an overlapping manual run, a trigger that fires twice -- none of them
+    // can hand out a second set for the same day.
+    //
+    // It is a stamp on the household rather than "are there chores dated
+    // today", which is what this used to check and which is now wrong: a
+    // night where every item carried over unfinished writes nothing at all,
+    // and the old test would have read that as "not run yet" and let the next
+    // call post the recurring chores a second time.
+    if (String(h.lastFilledOn || '').slice(0, 10) === today) return null;
 
     var n = 0;
     n += fillTroughFor(householdId, '');
     n += fillStyFor(householdId, '');
+    n += postRecurringFor(householdId);
 
+    update(CONFIG.SHEET_HOUSEHOLDS, h, { lastFilledOn: today });
     logAction(householdId, '', '', 'daily_fill', today + ': ' + n + ' chores');
     return n;
   } finally {
@@ -148,4 +154,105 @@ function checkDailyFill() {
  */
 function fillTodayNow() {
   return dailyFill();
+}
+
+// ---------------------------------------------------------------------
+// Repeating chores
+// ---------------------------------------------------------------------
+
+/**
+ * Posts any repeating chore that has come round again.
+ *
+ * These used to respawn the instant they were approved, which meant a weekly
+ * chore signed off at four in the afternoon reappeared at four in the
+ * afternoon -- drifting a little further into the day every week, and landing
+ * at a different time from everything else. They arrive with the Trough and
+ * the Sty now, so the board looks the same every morning.
+ *
+ * A series with an unfinished chore in it is skipped, for the same reason the
+ * Trough skips an item somebody still owes: the work is already on the board.
+ *
+ * Returns how many were posted.
+ */
+function postRecurringFor(householdId) {
+  var all = findAll(CONFIG.SHEET_CHORES, { householdId: householdId });
+  var today = todayStr();
+
+  // Gather each series and find its most recent member.
+  var latest = {};
+  var openSeries = {};
+
+  all.forEach(function (c) {
+    if (!c.seriesId || !c.recurrence) return;
+
+    if (c.status !== STATUS.DONE) {
+      openSeries[c.seriesId] = true;
+      return;
+    }
+    var prev = latest[c.seriesId];
+    var when = seriesDate(c);
+    if (!prev || when > seriesDate(prev)) latest[c.seriesId] = c;
+  });
+
+  var nextRef = refAllocator(householdId);
+  var posted = 0;
+
+  Object.keys(latest).forEach(function (seriesId) {
+    if (openSeries[seriesId]) return;          // still owed, nothing to post
+
+    var last = latest[seriesId];
+    var days = recurrenceDays(last.recurrence);
+    if (!days) return;
+
+    var due = addDays(seriesDate(last), days);
+    if (due > today) return;                   // not come round yet
+
+    insert(CONFIG.SHEET_CHORES, {
+      choreId: newId('c'),
+      householdId: householdId,
+      title: last.title,
+      notes: last.notes || '',
+      category: last.category || '',
+      points: Number(last.points || 0),
+      status: STATUS.POOL,
+      createdBy: last.createdBy || '',
+      createdAt: stamp(),
+      assigneeId: '',
+      claimedAt: '',
+      startedAt: '',
+      submittedAt: '',
+      approvedBy: '',
+      approvedAt: '',
+      // Dated today rather than the day it theoretically came due, so a chore
+      // that was approved late is not born overdue.
+      dueDate: today,
+      recurrence: last.recurrence,
+      reviewNote: '',
+      troughId: '',
+      styId: '',
+      ref: nextRef(),
+      seriesId: seriesId
+    });
+    posted++;
+  });
+
+  if (posted) {
+    logAction(householdId, '', '', 'recurring_posted', posted + ' chores');
+  }
+  return posted;
+}
+
+/** The date a finished chore counts as having happened on. */
+function seriesDate(c) {
+  var d = String(c.dueDate || '').slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+  return String(c.approvedAt || c.createdAt || '').slice(0, 10);
+}
+
+/** yyyy-mm-dd plus n days, in the script's timezone. */
+function addDays(dateStr, n) {
+  var d = new Date(dateStr + 'T12:00:00');
+  if (isNaN(d.getTime())) return todayStr();
+  d.setDate(d.getDate() + n);
+  return Utilities.formatDate(d, CONFIG_TZ(), 'yyyy-MM-dd');
 }

@@ -9,8 +9,22 @@
  *                     pool                 claimed                  done
  *
  * submitted can also be sent back, which returns it to in_progress with a
- * note. Approving a chore that has a recurrence rule immediately posts the
- * next one to the pool.
+ * note.
+ *
+ * IDENTITY. Every chore carries three things that keep two cards reading
+ * "Take the trash out" from being confused with each other:
+ *
+ *   choreId    the real key. Every action names one, and the server reads
+ *              title, points and status from THAT row -- never from the
+ *              browser -- so a chore cannot be talked into paying twice or
+ *              paying more than it is worth.
+ *   ref        a short per-household number (#42) shown on the card, so a
+ *              person can point at one out loud.
+ *   seriesId   ties a repeating chore to its predecessors.
+ *
+ * REPEATING CHORES do not respawn when approved. They are posted by the
+ * nightly job in Daily.gs, alongside the Trough and the Sty, so everything
+ * that lands does so at the same time each day.
  *
  * Every transition below is checked server-side against the acting member's
  * token, so the browser cannot claim a chore on someone else's behalf or
@@ -89,6 +103,10 @@ function choreView(c, membersById) {
 
   return {
     choreId: c.choreId,
+    ref: Number(c.ref || 0),
+    seriesId: c.seriesId || '',
+    // Where it came from, so the card can say so and the buttons can differ.
+    source: c.troughId ? 'trough' : (c.styId ? 'sty' : 'pool'),
     title: c.title,
     notes: c.notes || '',
     category: c.category || '',
@@ -117,6 +135,26 @@ function isOverdue(c) {
   if (!c.dueDate || c.status === STATUS.DONE) return false;
   var due = new Date(String(c.dueDate).slice(0, 10) + 'T23:59:59');
   return !isNaN(due.getTime()) && due.getTime() < Date.now();
+}
+
+/**
+ * Hands out the next few reference numbers for a household.
+ *
+ * Returns a function, so a batch (the nightly job writes a dozen at a time)
+ * scans the sheet once rather than once per chore.
+ */
+function refAllocator(householdId) {
+  var max = 0;
+  findAll(CONFIG.SHEET_CHORES, { householdId: householdId }).forEach(function (c) {
+    var n = Number(c.ref || 0);
+    if (n > max) max = n;
+  });
+  return function () { return ++max; };
+}
+
+/** True for a chore handed out by the Trough or the Sty. */
+function isDailyChore(c) {
+  return !!(c.troughId || c.styId);
 }
 
 /** Fetches a chore in this household, or throws. */
@@ -180,8 +218,11 @@ function createChore(payload) {
     status = STATUS.CLAIMED;
   }
 
+  var choreId = newId('c');
+  var recurrence = cleanRecurrence(payload.recurrence);
+
   var c = {
-    choreId: newId('c'),
+    choreId: choreId,
     householdId: me.householdId,
     title: title,
     notes: String(payload.notes || '').slice(0, 1000),
@@ -197,8 +238,14 @@ function createChore(payload) {
     approvedBy: '',
     approvedAt: '',
     dueDate: cleanDate(payload.dueDate),
-    recurrence: cleanRecurrence(payload.recurrence),
-    reviewNote: ''
+    recurrence: recurrence,
+    reviewNote: '',
+    troughId: '',
+    styId: '',
+    ref: refAllocator(me.householdId)(),
+    // A repeating chore is the first of a series; every later copy carries
+    // the same seriesId so the nightly job can find the latest one.
+    seriesId: recurrence ? choreId : ''
   };
   insert(CONFIG.SHEET_CHORES, c);
   logAction(me.householdId, c.choreId, me.memberId, 'created', title);
@@ -221,7 +268,12 @@ function updateChore(payload) {
   if (payload.notes !== undefined) changes.notes = String(payload.notes).slice(0, 1000);
   if (payload.category !== undefined) changes.category = String(payload.category).slice(0, 40);
   if (payload.dueDate !== undefined) changes.dueDate = cleanDate(payload.dueDate);
-  if (payload.recurrence !== undefined) changes.recurrence = cleanRecurrence(payload.recurrence);
+  if (payload.recurrence !== undefined && !isDailyChore(c)) {
+    // A Trough or Sty chore is already on a daily list; giving it a second
+    // schedule of its own would post a duplicate every night.
+    changes.recurrence = cleanRecurrence(payload.recurrence);
+    if (changes.recurrence && !c.seriesId) changes.seriesId = c.choreId;
+  }
 
   if (payload.points !== undefined) {
     changes.points = Math.max(0, Math.min(999,
@@ -297,6 +349,17 @@ function releaseChore(payload) {
   assertStatus(c, [STATUS.CLAIMED, STATUS.PROGRESS, STATUS.SUBMIT]);
   if (String(c.assigneeId) !== String(me.memberId) && !canApprove(me)) {
     throw new Error('That is not your chore.');
+  }
+
+  // A chore that was handed to somebody is theirs. Dropping it into the pool
+  // would let anyone pick up work that was deliberately shared out, and the
+  // nightly job would then hand out a second copy because this one is still
+  // outstanding. A parent moves it with "Give to" instead.
+  if (isDailyChore(c)) {
+    throw new Error(
+      c.troughId
+        ? 'Trough chores stay with the person they went to. A parent can hand it to somebody else.'
+        : 'Sty chores are each person\'s own. A parent can hand it to somebody else.');
   }
 
   update(CONFIG.SHEET_CHORES, c, {
@@ -406,10 +469,12 @@ function approveChore(payload) {
       }
     }
     logAction(me.householdId, c.choreId, me.memberId, 'approved',
-              c.title + ' (+' + pts + ')');
+              '#' + (c.ref || '?') + ' ' + c.title + ' (+' + pts + ')');
 
-    // A repeating chore posts its next occurrence the moment this one lands.
-    if (c.recurrence) respawn(c, me);
+    // Repeating chores are NOT respawned here. They are posted by the nightly
+    // job with everything else, so a chore approved at four in the afternoon
+    // does not reappear mid-afternoon tomorrow while the Trough and the Sty
+    // arrive at midnight.
   } finally {
     lock.releaseLock();
   }
@@ -469,10 +534,15 @@ function reopenChore(payload) {
 
   // Points already awarded are not clawed back -- the work was done. Reopening
   // is for "this needs doing again", not for undoing a payout.
+  //
+  // A Trough or Sty chore goes back to the person who had it rather than to
+  // the pool, for the same reason it could not be released there.
+  var daily = isDailyChore(c);
+
   update(CONFIG.SHEET_CHORES, c, {
-    status: STATUS.POOL,
-    assigneeId: '',
-    claimedAt: '',
+    status: daily ? STATUS.CLAIMED : STATUS.POOL,
+    assigneeId: daily ? c.assigneeId : '',
+    claimedAt: daily ? stamp() : '',
     startedAt: '',
     submittedAt: '',
     approvedBy: '',
@@ -488,51 +558,12 @@ function reopenChore(payload) {
 // Recurrence
 // ---------------------------------------------------------------------
 
-/** Posts the next occurrence of a repeating chore into the pool. */
-function respawn(c, actor) {
-  var next = nextDueDate(c.dueDate, c.recurrence);
-
-  insert(CONFIG.SHEET_CHORES, {
-    choreId: newId('c'),
-    householdId: c.householdId,
-    title: c.title,
-    notes: c.notes || '',
-    category: c.category || '',
-    points: Number(c.points || 0),
-    status: STATUS.POOL,
-    createdBy: c.createdBy || actor.memberId,
-    createdAt: stamp(),
-    assigneeId: '',
-    claimedAt: '',
-    startedAt: '',
-    submittedAt: '',
-    approvedBy: '',
-    approvedAt: '',
-    dueDate: next,
-    recurrence: c.recurrence,
-    reviewNote: ''
-  });
-  logAction(c.householdId, '', actor.memberId, 'respawned',
-            c.title + ' due ' + (next || 'whenever'));
-}
-
-/**
- * The next due date for a repeating chore.
- *
- * Counted from today rather than from the old due date, so a weekly chore
- * approved three weeks late becomes due next week -- not immediately overdue
- * on arrival, which would be a rotten thing to hand somebody.
- */
-function nextDueDate(previous, recurrence) {
-  var base = new Date();
-  base.setHours(12, 0, 0, 0);
-
-  if (recurrence === 'daily') base.setDate(base.getDate() + 1);
-  else if (recurrence === 'weekly') base.setDate(base.getDate() + 7);
-  else if (recurrence === 'monthly') base.setMonth(base.getMonth() + 1);
-  else return '';
-
-  return Utilities.formatDate(base, CONFIG_TZ(), 'yyyy-MM-dd');
+/** How many days a recurrence rule waits. 0 for "does not repeat". */
+function recurrenceDays(recurrence) {
+  if (recurrence === 'daily') return 1;
+  if (recurrence === 'weekly') return 7;
+  if (recurrence === 'monthly') return 30;
+  return 0;
 }
 
 /** The script's timezone, for formatting dates the household recognises. */

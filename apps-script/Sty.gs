@@ -138,11 +138,25 @@ function fillStyFor(householdId, actorId) {
     });
   if (!people.length) return 0;
 
+  // Unfinished Sty chores carry over the same way the Trough's do, but PER
+  // PERSON: this list is everybody's, so Ellie still owing yesterday's bed
+  // has nothing to do with whether Jack gets today's. She keeps hers; he
+  // gets a fresh one.
+  var owed = {};
+  findAll(CONFIG.SHEET_CHORES, { householdId: householdId })
+    .forEach(function (c) {
+      if (c.styId && c.assigneeId && c.status !== STATUS.DONE) {
+        owed[c.assigneeId + '|' + c.styId] = true;
+      }
+    });
+
   var today = todayStr();
+  var nextRef = refAllocator(householdId);
   var written = 0;
 
   people.forEach(function (m) {
     items.forEach(function (item) {
+      if (owed[m.memberId + '|' + item.styId]) return;
       insert(CONFIG.SHEET_CHORES, {
         choreId: newId('c'),
         householdId: householdId,
@@ -165,7 +179,9 @@ function fillStyFor(householdId, actorId) {
         recurrence: '',
         reviewNote: '',
         troughId: '',
-        styId: item.styId
+        styId: item.styId,
+        ref: nextRef(),
+        seriesId: ''
       });
       written++;
     });

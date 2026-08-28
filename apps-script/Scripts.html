@@ -760,11 +760,21 @@
       meta.push('<span class="pill">OK’d by ' + esc(c.approvedByName) + '</span>');
     }
 
+    if (c.source === 'trough') {
+      meta.push('<span class="pill src">The Trough</span>');
+    } else if (c.source === 'sty') {
+      meta.push('<span class="pill src">The Sty</span>');
+    }
+
     return '' +
       '<article class="chore s-' + esc(c.status) + (c.overdue ? ' overdue' : '') +
               '" data-chore="' + esc(c.choreId) + '">' +
         '<div class="chore-top">' +
-          '<h3 class="chore-title">' + esc(c.title) + '</h3>' +
+          '<h3 class="chore-title">' +
+            // The reference makes two identical titles tellable apart out
+            // loud -- "have you done 42?" -- without anybody reading an id.
+            (c.ref ? '<span class="chore-ref">#' + c.ref + '</span> ' : '') +
+            esc(c.title) + '</h3>' +
           (c.points ? '<span class="chore-points">' + c.points + 'p</span>' : '') +
         '</div>' +
         (c.notes ? '<p class="chore-notes">' + esc(c.notes) + '</p>' : '') +
@@ -792,10 +802,15 @@
     } else if (c.status === 'claimed' && (mine || boss)) {
       out.push(btn('start', 'Start', 'btn-primary'));
       out.push(btn('submit', 'Mark done', 'btn-go'));
-      out.push(btn('release', 'Put back', 'btn-secondary'));
+      // A Trough or Sty chore was handed out deliberately, so it cannot be
+      // dropped back in the pool for somebody else to pick up. A parent moves
+      // it with "Give to" instead. The server refuses either way.
+      if (c.source === 'pool') out.push(btn('release', 'Put back', 'btn-secondary'));
+      else if (boss) out.push(btn('assign', 'Give to…', 'btn-secondary'));
     } else if (c.status === 'in_progress' && (mine || boss)) {
       out.push(btn('submit', 'Mark done', 'btn-go'));
       out.push(btn('pause', 'Pause', 'btn-secondary'));
+      if (c.source !== 'pool' && boss) out.push(btn('assign', 'Give to…', 'btn-secondary'));
     } else if (c.status === 'submitted') {
       if (boss) {
         out.push(btn('approve', 'Approve', 'btn-go'));
@@ -1335,7 +1350,8 @@
                      '</option>';
             }).join('') +
           '</select>' +
-          '<small>A repeating chore reposts itself once approved.</small>' +
+          '<small>Repeats are posted overnight with the daily lists, and ' +
+          'only once the last one has been finished.</small>' +
         '</label>' +
 
         (!editing

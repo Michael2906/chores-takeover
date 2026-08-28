@@ -314,6 +314,48 @@ that happens off the board.
 
 ---
 
+## Chore identity
+
+Every chore carries three things, so two cards both reading "Take the trash
+out" can never be confused with each other:
+
+| | |
+| --- | --- |
+| `choreId` | The real key. Every action names one, and the server reads title, points and status from **that row** — never from the browser. A chore cannot be talked into paying twice or paying more than it is worth. |
+| `ref` | A short per-household number shown on the card (`#42`), so a person can point at one out loud. |
+| `seriesId` | Ties a repeating chore to its predecessors. |
+
+## Nothing reposts while it is still owed
+
+The same rule governs all three sources, and it is why the board does not
+silently grow:
+
+- **The Trough** skips an item that still has an unfinished chore anywhere. It
+  stays with whoever has it until it is approved, or a parent hands it to
+  somebody else.
+- **The Sty** skips **per person**. Ellie still owing yesterday's bed has
+  nothing to do with whether Jack gets today's — she keeps hers, he gets a
+  fresh one.
+- **Repeating chores** skip a series with anything unfinished in it.
+
+Measured over two nights: night one handed out 18; night two handed out 4 and
+carried 14 over, the 4 going to the one person who had finished. Zero
+duplicate outstanding chores.
+
+### Trough and Sty chores never reach the pool
+
+They were handed out deliberately, so **Put back** is not offered on them and
+the server refuses it. Two reasons: somebody else could pick up work that was
+shared out on purpose, and an unassigned chore is still unfinished, so the
+nightly job would hand out a second copy alongside it. A parent moves one with
+**Give to** instead. Reopening a finished one returns it to the person who had
+it rather than to the pool, for the same reason.
+
+They also cannot be given a recurrence — they are already on a daily list, and
+a second schedule would post a duplicate every night.
+
+---
+
 ## How a chore moves
 
 ```
@@ -326,9 +368,14 @@ pool --claim--> claimed --start--> in_progress --mark done--> submitted
 ```
 
 A submitted chore can also be **sent back** with a note, which returns it to
-in-progress. Approving a chore that repeats immediately posts the next one to
-the pool, dated from today rather than from the old due date — so a weekly
-chore approved three weeks late is not born overdue.
+in-progress.
+
+Repeating chores are **not** respawned on approval. They are posted by the
+nightly job alongside the Trough and the Sty, so everything lands at the same
+time each day — a weekly chore signed off at four in the afternoon used to
+reappear at four in the afternoon, drifting further into the day every week.
+The new one is dated today rather than the day it theoretically came due, so a
+chore approved late is not born overdue.
 
 **Points are a parent's decision.** Anyone can post a chore, because
 volunteering is worth encouraging, but only a parent account sets what it is
