@@ -70,7 +70,11 @@ function loadStore(payload) {
     claims: claims.slice(0, 60),
     myPoints: Number(me.points || 0),
     canManage: me.role === 'owner',
-    canFulfil: canApprove(me)
+    canFulfil: canApprove(me),
+    ideas: prizeIdeas(),
+    // Offered only while the pen is empty -- once there is something in it,
+    // bulk-adding a dozen more is not what anybody wants.
+    canStock: me.role === 'owner' && prizes.length === 0
   };
 }
 
@@ -315,4 +319,38 @@ function adjustPoints(payload) {
     lock.releaseLock();
   }
   return { members: activeMembers(me.householdId) };
+}
+
+/**
+ * Fills an empty pen with a starter set.
+ *
+ * Refuses if anything is already in there: this is the "I do not want to
+ * invent a reward scheme" button, not a way to add twelve duplicates.
+ */
+function stockStore(payload) {
+  payload = payload || {};
+  var me = requireOwner(payload.memberToken);
+
+  var have = findAll(CONFIG.SHEET_PRIZES, { householdId: me.householdId })
+    .filter(function (p) { return String(p.active) !== 'false'; });
+  if (have.length) {
+    throw new Error('There are already prizes in the pen.');
+  }
+
+  starterPrizes().forEach(function (p) {
+    insert(CONFIG.SHEET_PRIZES, {
+      prizeId: newId('p'),
+      householdId: me.householdId,
+      name: p.name,
+      notes: p.notes || '',
+      cost: Number(p.cost || 0),
+      stock: '',
+      active: true,
+      createdAt: stamp()
+    });
+  });
+
+  logAction(me.householdId, '', me.memberId, 'store_stocked',
+            starterPrizes().length + ' prizes');
+  return loadStore(payload);
 }

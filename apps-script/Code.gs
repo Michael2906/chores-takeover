@@ -95,11 +95,17 @@ function actions() {
     addTroughItem:    addTroughItem,
     updateTroughItem: updateTroughItem,
     removeTroughItem: removeTroughItem,
-    fillTrough:       fillTrough,
+
+    // The Sty -- everybody's own patch
+    loadSty:       loadSty,
+    addStyItem:    addStyItem,
+    updateStyItem: updateStyItem,
+    removeStyItem: removeStyItem,
 
     // The Prize Pen
     loadStore:         loadStore,
     addPrize:          addPrize,
+    stockStore:        stockStore,
     updatePrize:       updatePrize,
     removePrize:       removePrize,
     redeemPrize:       redeemPrize,

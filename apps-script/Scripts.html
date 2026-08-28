@@ -599,9 +599,8 @@
     // The Trough is read-only for a child -- a list they cannot add to or
     // hand out -- so it is not worth a menu entry. The Prize Pen stays: that
     // one is mostly for them.
-    document.querySelectorAll('[data-menu=trough]').forEach(function (b) {
-      b.hidden = !me.canApprove;
-    });
+    document.querySelectorAll('[data-menu=trough],[data-menu=sty]')
+      .forEach(function (b) { b.hidden = !me.canApprove; });
 
     renderCounts();
     renderContent();
@@ -1005,6 +1004,8 @@
       passwordForm();
     } else if (which === 'trough') {
       troughForm();
+    } else if (which === 'sty') {
+      styForm();
     } else if (which === 'store') {
       storeForm();
     }
@@ -1054,9 +1055,13 @@
 
     openModal(esc(t.name),
       '<p class="form-hint" style="text-align:left">' +
-        'The chores that need doing every day. Filling the trough shares them ' +
-        'out: nobody gets the same one two days running, the children get the ' +
-        'bigger share, and the points come out roughly even.' +
+        'Chores that need doing every day, <strong>shared out</strong> - one ' +
+        'chore, one person. Nobody gets the same one two days running, the ' +
+        'children get the bigger share, and the points come out roughly even.' +
+      '</p>' +
+      '<p class="form-hint" style="text-align:left">' +
+        'Handed out automatically every night at ' + fillHourLabel(t.fillHour) +
+        '. Nothing to press. Anything on this list stays until you take it off.' +
       '</p>' +
       last +
       '<hr class="hr">' +
@@ -1101,11 +1106,7 @@
               }).catch(fail).then(function () { busy(btn, false); });
             } }
         ] : [])
-        .concat(t.canFill ? [
-          { label: 'Fill the trough', kind: 'btn-primary', act: function (btn) {
-              doFill(btn, false);
-            } }
-        ] : []));
+      );
 
     // Picking a ready-made chore fills the points and category in.
     var addForm = $('trough-add');
@@ -1145,36 +1146,12 @@
     }
   }
 
-  /**
-   * Runs the hand-out.
-   *
-   * Filling twice in a day would double everybody's work, so the server
-   * refuses a second run and says so. `again` is what the confirmation sends
-   * back when that is genuinely what was wanted.
-   */
-  function doFill(btn, again) {
-    busy(btn, true);
-    var stop = working('Sharing the chores out...');
-
-    api('fillTrough', { again: !!again })
-      .then(function (data) {
-        applyBoard(data);
-        closeModal();
-        toast('Chores handed out.', 'good');
-      })
-      .catch(function (err) {
-        var m = String(err.message || '');
-        if (m.indexOf('ALREADY_FILLED:') === 0) {
-          var n = m.split(':')[1];
-          confirmModal('Already filled today',
-            'The trough has already been filled today - ' + n +
-            ' chores are out. Filling it again adds another full set on top.',
-            'Fill it again', function (b) { doFill(b, true); });
-          return;
-        }
-        fail(err);
-      })
-      .then(function () { stop(); busy(btn, false); });
+  /** "midnight", "1am", "11pm" -- for the line explaining the schedule. */
+  function fillHourLabel(h) {
+    h = Number(h) || 0;
+    if (h === 0) return 'midnight';
+    if (h === 12) return 'midday';
+    return h < 12 ? h + 'am' : (h - 12) + 'pm';
   }
 
   function troughItemForm(item) {
@@ -1695,6 +1672,159 @@
       ]));
   }
 
+
+  // -----------------------------------------------------------------
+  // The Sty -- everybody's own patch
+  // -----------------------------------------------------------------
+
+  function styForm() {
+    api('loadSty', {}).then(renderSty).catch(fail);
+  }
+
+  function renderSty(t) {
+    var rows = t.items.length
+      ? t.items.map(function (i) {
+          return '<div class="list-row">' +
+            '<span class="grow"><span class="t">' + esc(i.title) + '</span>' +
+              (i.category || i.notes
+                ? '<br><span class="sub">' +
+                  esc([i.category, i.notes].filter(Boolean).join(' - ')) +
+                  '</span>'
+                : '') +
+            '</span>' +
+            '<span class="cost">' + i.points + 'p</span>' +
+            (t.canEdit
+              ? '<button class="btn btn-sm btn-secondary" data-yedit="' +
+                  esc(i.styId) + '">Edit</button>' +
+                '<button class="btn btn-sm btn-quiet" data-ydel="' +
+                  esc(i.styId) + '">Remove</button>'
+              : '') +
+          '</div>';
+        }).join('')
+      : '<p class="form-hint">Nothing on the list yet.</p>';
+
+    openModal(esc(t.name),
+      '<p class="form-hint" style="text-align:left">' +
+        'Chores that go to <strong>everybody</strong>, every day - their bed, ' +
+        'their room, their laundry. Nobody can do these for anyone else, so ' +
+        'there is nothing to share out.' +
+      '</p>' +
+      '<p class="form-hint" style="text-align:left">' +
+        (t.handedOutToday
+          ? 'Handed out today: ' + t.handedOutToday + ' chores.'
+          : 'Not handed out yet today.') +
+        ' Goes out automatically every night' +
+        (t.parentsToo ? ' to everyone' : ' to the children only') + '.' +
+      '</p>' +
+      '<hr class="hr">' +
+      '<div class="list-rows" id="sty-rows">' + rows + '</div>' +
+      (t.canEdit
+        ? '<hr class="hr">' +
+          '<form class="form" id="sty-add">' +
+            '<label class="field"><span>Add to the list</span>' +
+              '<input name="title" list="sugg-list-y" maxlength="120" ' +
+                     'autocomplete="off" placeholder="Pick one, or type your own" />' +
+              '<datalist id="sugg-list-y">' +
+                state.suggestions.map(function (x) {
+                  return '<option value="' + esc(x.title) + '"></option>';
+                }).join('') +
+              '</datalist></label>' +
+            '<div class="chips">' +
+              '<input type="number" name="points" min="0" max="999" ' +
+                     'placeholder="Points" style="max-width:7rem" />' +
+              '<input name="category" maxlength="40" placeholder="Category" ' +
+                     'style="max-width:10rem" />' +
+            '</div>' +
+          '</form>'
+        : ''),
+      [{ label: 'Close', kind: 'btn-secondary', act: closeModal }]
+        .concat(t.canEdit ? [
+          { label: 'Add', kind: 'btn-primary', act: function (btn) {
+              var f = $('sty-add');
+              if (!f.title.value.trim()) { toast('Enter a chore.', 'bad'); return; }
+              busy(btn, true);
+              api('addStyItem', {
+                title: f.title.value,
+                points: f.points.value,
+                category: f.category.value
+              }).then(function (data) {
+                renderSty(data);
+                toast('Added to the list.', 'good');
+              }).catch(fail).then(function () { busy(btn, false); });
+            } }
+        ] : []));
+
+    var addForm = $('sty-add');
+    if (addForm) {
+      addForm.title.addEventListener('input', function () {
+        var typed = addForm.title.value.trim().toLowerCase();
+        for (var i = 0; i < state.suggestions.length; i++) {
+          var x = state.suggestions[i];
+          if (String(x.title).toLowerCase() === typed) {
+            addForm.points.value = x.points;
+            addForm.category.value = x.category || '';
+            return;
+          }
+        }
+      });
+    }
+
+    var host = $('sty-rows');
+    if (host) {
+      host.addEventListener('click', function (e) {
+        var del = e.target.closest('[data-ydel]');
+        var ed = e.target.closest('[data-yedit]');
+
+        if (del) {
+          busy(del, true);
+          api('removeStyItem', { styId: del.dataset.ydel })
+            .then(renderSty).catch(fail);
+          return;
+        }
+        if (ed) {
+          var item = t.items.filter(function (i) {
+            return i.styId === ed.dataset.yedit;
+          })[0];
+          if (item) styItemForm(item);
+        }
+      });
+    }
+  }
+
+  function styItemForm(item) {
+    openModal('Edit ' + esc(item.title),
+      '<form class="form" id="yitem-form">' +
+        '<label class="field"><span>Chore</span>' +
+          '<input name="title" value="' + esc(item.title) + '" maxlength="120" /></label>' +
+        '<label class="field"><span>Points <small>(each person)</small></span>' +
+          '<input type="number" name="points" min="0" max="999" value="' +
+            (item.points || 0) + '" /></label>' +
+        '<label class="field"><span>Category</span>' +
+          '<input name="category" value="' + esc(item.category || '') +
+          '" maxlength="40" /></label>' +
+        '<label class="field"><span>Details</span>' +
+          '<textarea name="notes" maxlength="1000">' + esc(item.notes || '') +
+          '</textarea></label>' +
+      '</form>',
+      [
+        { label: 'Back', kind: 'btn-secondary', act: styForm },
+        { label: 'Save', kind: 'btn-primary', act: function (btn) {
+            var f = $('yitem-form');
+            busy(btn, true);
+            api('updateStyItem', {
+              styId: item.styId,
+              title: f.title.value,
+              points: f.points.value,
+              category: f.category.value,
+              notes: f.notes.value
+            }).then(function (data) {
+              renderSty(data);
+              toast('Saved.', 'good');
+            }).catch(fail).then(function () { busy(btn, false); });
+          } }
+      ]);
+  }
+
   // -----------------------------------------------------------------
   // The Prize Pen -- what the points are for
   // -----------------------------------------------------------------
@@ -1757,7 +1887,15 @@
         ? '<hr class="hr">' +
           '<form class="form" id="prize-add">' +
             '<label class="field"><span>Add a prize</span>' +
-              '<input name="name" maxlength="80" placeholder="Ice cream" /></label>' +
+              '<input name="name" maxlength="80" list="prize-ideas" ' +
+                     'autocomplete="off" placeholder="Pick one, or type your own" />' +
+              '<datalist id="prize-ideas">' +
+                (st.ideas || []).map(function (x) {
+                  return '<option value="' + esc(x.name) + '"></option>';
+                }).join('') +
+              '</datalist>' +
+              '<small>' + (st.ideas || []).length +
+              ' ready-made ideas with costs already set.</small></label>' +
             '<div class="chips">' +
               '<input type="number" name="cost" min="0" placeholder="Cost" ' +
                      'style="max-width:7rem" />' +
@@ -1770,6 +1908,15 @@
       '<div class="section-head"><h3>Claims</h3></div>' +
       '<div class="list-rows" id="claims">' + claims + '</div>',
       [{ label: 'Close', kind: 'btn-secondary', act: closeModal }]
+        .concat(st.canStock ? [
+          { label: 'Stock the pen', kind: 'btn-secondary', act: function (btn) {
+              busy(btn, true);
+              api('stockStore', {}).then(function (data) {
+                renderStore(data);
+                toast('Stocked with a starter set.', 'good');
+              }).catch(fail).then(function () { busy(btn, false); });
+            } }
+        ] : [])
         .concat(st.canManage ? [
           { label: 'Add prize', kind: 'btn-primary', act: function (btn) {
               var f = $('prize-add');
@@ -1785,6 +1932,20 @@
               }).catch(fail).then(function () { busy(btn, false); });
             } }
         ] : []));
+
+    var pf = $('prize-add');
+    if (pf) {
+      pf.name.addEventListener('input', function () {
+        var typed = pf.name.value.trim().toLowerCase();
+        var ideas = st.ideas || [];
+        for (var i = 0; i < ideas.length; i++) {
+          if (String(ideas[i].name).toLowerCase() === typed) {
+            pf.cost.value = ideas[i].cost;
+            return;
+          }
+        }
+      });
+    }
 
     $('shelf').addEventListener('click', function (e) {
       var buy = e.target.closest('[data-buy]');

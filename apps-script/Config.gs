@@ -28,6 +28,7 @@ var CONFIG = {
   SHEET_SESSIONS:   'Sessions',
   SHEET_CHORES:     'Chores',
   SHEET_TROUGH:     'Trough',
+  SHEET_STY:        'Sty',
   SHEET_PRIZES:     'Prizes',
   SHEET_REDEEMED:   'Redemptions',
   SHEET_LOG:        'Activity Log',
@@ -125,6 +126,40 @@ var CONFIG = {
   // Nobody gets the same trough chore two days running. Raise this to widen
   // the gap -- 2 means "not yesterday or the day before".
   NO_REPEAT_DAYS: 1,
+
+  // ---------------------------------------------------------------------
+  // The Sty -- everybody's own patch
+  // ---------------------------------------------------------------------
+
+  // The other daily list. Where the Trough is shared OUT -- one chore, one
+  // person -- everything on this list goes to EVERYBODY, every day. It is for
+  // the chores that are each person's own: their bed, their room, their
+  // washing. Nobody can do somebody else's.
+  STY_NAME: 'The Sty',
+
+  // Whether parents get the Sty list too. Everyone has a bedroom and laundry,
+  // so this is on. Turn it off to make it children-only.
+  STY_PARENTS_TOO: true,
+
+  // ---------------------------------------------------------------------
+  // The nightly hand-out
+  // ---------------------------------------------------------------------
+
+  // Both lists are handed out automatically, once a day, by a trigger that
+  // setUp() installs. Nobody has to press anything.
+  //
+  // The hour is in the script's timezone -- America/Chicago, set in
+  // appsscript.json -- so 0 means midnight Central.
+  //
+  // BE AWARE: Apps Script time triggers are approximate. atHour(0) means
+  // "somewhere in the midnight hour", not 00:00:00 exactly. In practice it
+  // lands within a few minutes to an hour. That is a limit of the platform,
+  // not something this setting can tighten.
+  DAILY_FILL_HOUR: 0,
+
+  // A run that finds today's chores already handed out does nothing, so a
+  // retry after a failure cannot double anybody up.
+  //
 
   // ---------------------------------------------------------------------
   // The Store

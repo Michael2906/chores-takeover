@@ -31,6 +31,7 @@ function setUp() {
     CONFIG.SHEET_SESSIONS,
     CONFIG.SHEET_CHORES,
     CONFIG.SHEET_TROUGH,
+    CONFIG.SHEET_STY,
     CONFIG.SHEET_PRIZES,
     CONFIG.SHEET_REDEEMED,
     CONFIG.SHEET_LOG
@@ -62,9 +63,15 @@ function setUp() {
   // during somebody's first sign-in. It is create-once -- see Auth.gs.
   pepper();
 
+  // The nightly hand-out. Installed here so a normal setup needs nothing
+  // else; it replaces its own old trigger rather than stacking a second one.
+  installDailyFill();
+
   console.log('');
   console.log('Setup complete.');
   console.log('Spreadsheet: ' + ss.getUrl());
+  console.log('');
+  console.log('The Trough and The Sty now hand themselves out nightly.');
   console.log('');
   console.log('Next: Deploy > New deployment > Web app,');
   console.log('  Execute as: Me,  Who has access: Anyone.');
@@ -126,6 +133,7 @@ function resetEverything(confirmation) {
     CONFIG.SHEET_SESSIONS,
     CONFIG.SHEET_CHORES,
     CONFIG.SHEET_TROUGH,
+    CONFIG.SHEET_STY,
     CONFIG.SHEET_PRIZES,
     CONFIG.SHEET_REDEEMED,
     CONFIG.SHEET_LOG

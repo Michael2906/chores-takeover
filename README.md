@@ -166,7 +166,10 @@ used exactly as before, so both routes work.
 | `Auth.gs` | Households, devices, sub-accounts, PINs, sessions, lockouts. |
 | `Chores.gs` | Chores and the transitions between their states. |
 | `Sheets.gs` | The spreadsheet as a database. |
-| `Trough.gs` | The daily hand-out and the algorithm that shares it out. |
+| `Trough.gs` | The shared daily list and the algorithm that divides it. |
+| `Sty.gs` | The daily list everybody gets a copy of. |
+| `Daily.gs` | The nightly job that hands both lists out. |
+| `PrizeIdeas.gs` | 61 ready-made prizes with costs. |
 | `Store.gs` | The Prize Pen, redemptions, and moving points by hand. |
 | `Suggestions.gs` | The 147 ready-made chores. Add your own here. |
 | `Setup.gs` | `setUp()`, and the housekeeping functions. |
@@ -212,13 +215,40 @@ bridge carried them.
 
 ---
 
-## The Trough
+## The two daily lists
 
-A standing list of the chores that need doing every day. **Fill the trough**
-copies each one into a real chore and hands it to somebody. The account holder
-keeps the list; any parent can fill it.
+Both are **standing lists**: anything added stays until the account holder
+takes it off. Neither is filled by hand -- a trigger installed by `setUp()`
+hands them both out every night, for every household.
 
-The hand-out is pseudo-random, shaped by three rules:
+| | The Trough | The Sty |
+| --- | --- | --- |
+| Shape | One chore, **one person** | One chore, **everybody** |
+| For | Shared work -- trash, dishes, the lawn | Your own patch -- your bed, your room, your laundry |
+| Shared out? | Yes, balanced and rotated | No, there is nothing to share |
+
+### The nightly hand-out
+
+`dailyFill()` runs at `CONFIG.DAILY_FILL_HOUR` (0 = midnight Central, since
+`appsscript.json` sets the timezone to America/Chicago).
+
+> **Apps Script triggers are approximate.** `atHour(0)` means "somewhere in the
+> midnight hour", not 00:00:00. Usually within minutes, occasionally later.
+> There is no setting that tightens this. The job copes: it works out the date
+> itself and does nothing if that date has already gone out, so an early, late,
+> repeated or manually-retried run cannot double anybody up.
+
+Useful from the editor:
+
+| Function | What it does |
+| --- | --- |
+| `checkDailyFill()` | Says whether the trigger is actually installed. |
+| `installDailyFill()` | Installs or replaces it. `setUp()` already does this. |
+| `fillTodayNow()` | The recovery path -- hands today's chores out immediately, skipping any household that already has them. |
+
+### How the Trough divides
+
+Three rules:
 
 1. **Nobody gets the same chore two days running.** Whoever had the bins
    yesterday is not eligible for the bins today.
@@ -239,13 +269,38 @@ whoever is furthest below theirs, biggest chores first.
 > known before anything is handed out, so the 20-pointer goes to a child on the
 > first pass. Same test after the change: children 17.5 each, parents 7.0.
 
-Filling twice in one day is refused unless you confirm, because it would
-double everybody's work.
+### The Sty
+
+Everything on it goes to every active member, every day, already assigned --
+there is no pool step, because nobody can make somebody else's bed. Set
+`CONFIG.STY_PARENTS_TOO` to `false` to make it children-only.
+
+Note that the Sty flattens the point spread: everyone gets the same items, so
+the Trough's weighting only applies to the Trough's share. In a test run with
+both lists, children finished on 14 points and parents on 11 -- but of that,
+the Trough part was 6 to each child and 3 to each parent, exactly the 2:1
+intended.
 
 ## The Prize Pen
 
 What the points are actually for. The account holder stocks it; anybody spends
 what they have earned.
+
+`PrizeIdeas.gs` holds **61 ready-made prizes with costs already set**, offered
+in the "add a prize" box. While the pen is empty a **Stock the pen** button
+adds a starter dozen spread across the price bands -- a pen with sixty things
+in it is worse than one with a dozen, because nothing stands out as worth
+saving for.
+
+Costs are pitched against the chore points, where a day's work is roughly
+10-25:
+
+| Band | Roughly | For |
+| --- | --- | --- |
+| 5-15 | a day or two | small and frequent |
+| 20-40 | most of a week | the everyday reward |
+| 50-100 | a fortnight | an outing, a small toy |
+| 150-400 | a month or more | the thing they are saving for |
 
 Points are taken the moment a prize is claimed, and the claim sits in a list
 until a parent marks it handed over -- the prize itself happens in the real

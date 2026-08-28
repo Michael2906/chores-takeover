@@ -20,6 +20,7 @@
     sessions: [],
     chores: [],
     trough: [],
+    sty: [],
     prizes: [],
     redemptions: []
   };
@@ -46,6 +47,17 @@
     { title: 'Wash the car', category: 'Vehicle', points: 15,
       recurrence: 'monthly', notes: '' }
   ];
+
+  var PRIZE_IDEAS = [
+    { name: '30 minutes of extra screen time', cost: 10, notes: 'Screen time' },
+    { name: 'An ice cream',                    cost: 15, notes: 'Food' },
+    { name: 'Stay up 30 minutes later',        cost: 20, notes: 'Bedtime' },
+    { name: 'Skip one chore',                  cost: 40, notes: 'Time off' },
+    { name: 'The movies',                      cost: 90, notes: 'Days out' },
+    { name: 'A day at the zoo',                cost: 200, notes: 'Days out' }
+  ];
+
+  var STARTER = PRIZE_IDEAS.slice(0, 4);
 
   // ---------------------------------------------------------------
   // Seed data, so the board can be looked at without ten minutes of typing
@@ -124,6 +136,12 @@
     { troughId: 'tr4', title: 'Tidy the front room', category: 'Living Areas', points: 4, notes: '' },
     { troughId: 'tr5', title: 'Hoover the stairs',   category: 'Living Areas', points: 6, notes: '' },
     { troughId: 'tr6', title: 'Make your bed',       category: 'Bedroom', points: 1, notes: '' }
+  ];
+
+  DB.sty = [
+    { styId: 'sy1', title: 'Make your bed',        category: 'Bedroom', points: 1, notes: '' },
+    { styId: 'sy2', title: 'Put your laundry away', category: 'Laundry', points: 2, notes: '' },
+    { styId: 'sy3', title: 'Clean your room',      category: 'Bedroom', points: 5, notes: '' }
   ];
 
   DB.prizes = [
@@ -646,41 +664,53 @@
       return ACTIONS.loadTrough(p);
     },
 
-    fillTrough: function (p) {
-      var me = requireApprover(p.memberToken);
-      var already = DB.chores.filter(function (c) {
-        return c.troughId && c.dueDate === today();
-      });
-      if (already.length && !p.again) throw new Error('ALREADY_FILLED:' + already.length);
-      if (!DB.trough.length) {
-        throw new Error('There is nothing on the list yet. Add some chores first.');
-      }
-      var people = DB.members.filter(function (m) {
-        return m.householdId === me.householdId && m.active !== false;
-      });
+    loadSty: function (p) {
+      var me = requireMember(p.memberToken);
+      return {
+        name: 'The Sty',
+        items: DB.sty.slice(),
+        parentsToo: true,
+        handedOutToday: DB.chores.filter(function (c) {
+          return c.styId && c.dueDate === today();
+        }).length,
+        canEdit: me.role === 'owner'
+      };
+    },
 
-      // Yesterday's hand-out, so nobody repeats.
-      var recent = {};
-      DB.chores.forEach(function (c) {
-        if (c.troughId && c.assigneeId && c.dueDate && c.dueDate < today()) {
-          if (!recent[c.troughId]) recent[c.troughId] = {};
-          recent[c.troughId][c.assigneeId] = true;
-        }
-      });
+    addStyItem: function (p) {
+      requireOwner(p.memberToken);
+      if (!String(p.title || '').trim()) throw new Error('Give the chore a name.');
+      DB.sty.push({ styId: id('sy'), title: String(p.title).trim(),
+        category: p.category || '', points: Math.max(0, Number(p.points) || 0),
+        notes: '' });
+      return ACTIONS.loadSty(p);
+    },
 
-      planTrough(DB.trough, people, recent).forEach(function (row) {
-        DB.chores.push({
-          choreId: id('c'), householdId: me.householdId,
-          title: row.item.title, notes: row.item.notes || '',
-          category: row.item.category || '', points: row.item.points,
-          status: 'claimed', createdBy: me.memberId, createdAt: now(),
-          assigneeId: row.member.memberId, claimedAt: now(),
-          startedAt: '', submittedAt: '', approvedBy: '', approvedAt: '',
-          dueDate: today(), recurrence: '', reviewNote: '',
-          troughId: row.item.troughId
-        });
+    updateStyItem: function (p) {
+      requireOwner(p.memberToken);
+      var t = find(DB.sty, 'styId', p.styId);
+      if (!t) throw new Error('That is not on your list.');
+      if (p.title !== undefined) t.title = String(p.title).trim() || t.title;
+      if (p.points !== undefined) t.points = Math.max(0, Number(p.points) || 0);
+      if (p.category !== undefined) t.category = p.category;
+      if (p.notes !== undefined) t.notes = p.notes;
+      return ACTIONS.loadSty(p);
+    },
+
+    removeStyItem: function (p) {
+      requireOwner(p.memberToken);
+      DB.sty = DB.sty.filter(function (t) { return t.styId !== p.styId; });
+      return ACTIONS.loadSty(p);
+    },
+
+    stockStore: function (p) {
+      requireOwner(p.memberToken);
+      if (DB.prizes.length) throw new Error('There are already prizes in the pen.');
+      STARTER.forEach(function (x) {
+        DB.prizes.push({ prizeId: id('pz'), name: x.name, notes: x.notes,
+                         cost: x.cost, stock: '' });
       });
-      return board(p.memberToken);
+      return ACTIONS.loadStore(p);
     },
 
     loadStore: function (p) {
@@ -691,6 +721,8 @@
         myPoints: Number(me.points || 0),
         canManage: me.role === 'owner',
         canFulfil: boss,
+        ideas: PRIZE_IDEAS,
+        canStock: me.role === 'owner' && DB.prizes.length === 0,
         prizes: DB.prizes.map(function (x) {
           var stock = x.stock === '' ? null : Number(x.stock);
           return { prizeId: x.prizeId, name: x.name, notes: x.notes,
@@ -839,6 +871,54 @@
       self._ok(res);
     }, 120);
   };
+
+  /**
+   * What the nightly trigger does, so the preview can exercise it.
+   * window.MOCK_NIGHTLY() in the console runs a "midnight".
+   */
+  window.MOCK_NIGHTLY = function () {
+    var already = DB.chores.filter(function (c) {
+      return (c.troughId || c.styId) && c.dueDate === today();
+    });
+    if (already.length) return { skipped: true, existing: already.length };
+
+    var h = DB.households[0];
+    var people = DB.members.filter(function (m) {
+      return m.householdId === h.householdId && m.active !== false;
+    });
+
+    var recent = {};
+    DB.chores.forEach(function (c) {
+      if (c.troughId && c.assigneeId && c.dueDate && c.dueDate < today()) {
+        if (!recent[c.troughId]) recent[c.troughId] = {};
+        recent[c.troughId][c.assigneeId] = true;
+      }
+    });
+
+    var n = 0;
+    planTrough(DB.trough, people, recent).forEach(function (row) {
+      DB.chores.push(mkChore(h, row.item, row.member, row.item.troughId, ''));
+      n++;
+    });
+    people.forEach(function (m) {
+      DB.sty.forEach(function (item) {
+        DB.chores.push(mkChore(h, item, m, '', item.styId));
+        n++;
+      });
+    });
+    return { filled: n };
+  };
+
+  function mkChore(h, item, member, troughId, styId) {
+    return {
+      choreId: id('c'), householdId: h.householdId, title: item.title,
+      notes: item.notes || '', category: item.category || '',
+      points: item.points, status: 'claimed', createdBy: '', createdAt: now(),
+      assigneeId: member.memberId, claimedAt: now(), startedAt: '',
+      submittedAt: '', approvedBy: '', approvedAt: '', dueDate: today(),
+      recurrence: '', reviewNote: '', troughId: troughId, styId: styId
+    };
+  }
 
   window.google = { script: { run: new Runner() } };
 

@@ -15,16 +15,14 @@
  *   3. The points come out roughly even -- weighted by rule 2 -- so nobody
  *      ends the day with three times what everybody else got.
  *
- * Rules 2 and 3 are the same mechanism: each person carries a LOAD, which is
- * the points they have been given today divided by their weight. The next
- * chore goes to whoever is carrying least. A child weighted 2 has to be given
- * twice the points a parent has before the parent looks like the better
- * choice, which is exactly the lean we want.
+ * Rules 2 and 3 are one mechanism: each person is given a TARGET share of the
+ * day's points, proportional to their weight, and every chore goes to whoever
+ * is furthest below theirs. Biggest chores first, so the small ones are left
+ * over to even the totals up.
  *
- * Chores are handed out biggest-first. Assigning the 20-pointers while
- * everybody is still empty leaves the small ones to even the totals up
- * afterwards; doing it the other way round strands a big chore at the end with
- * nowhere balanced to put it.
+ * It is handed out by the nightly job in Daily.gs, not by anybody pressing a
+ * button. The list itself is standing: what is on it stays until it is taken
+ * off.
  */
 
 // ---------------------------------------------------------------------
@@ -56,7 +54,8 @@ function loadTrough(payload) {
     items: troughItems(me.householdId),
     lastFilled: lastFillSummary(me.householdId),
     canEdit: me.role === 'owner',
-    canFill: canApprove(me)
+    // Handed out by the nightly job, so there is nothing here to press.
+    fillHour: Number(CONFIG.DAILY_FILL_HOUR) || 0
   };
 }
 
@@ -132,77 +131,52 @@ function removeTroughItem(payload) {
 // ---------------------------------------------------------------------
 
 /**
- * Hands today's list out.
+ * Hands the Trough out for one household. Called by the nightly job.
  *
- * Locked and idempotent-ish: filling twice in one day would double everybody's
- * work, so a second attempt is refused unless payload.again is set, which is
- * what the "fill it again" confirmation sends.
+ * Takes a household id rather than a request payload: it runs from a trigger,
+ * where there is no signed-in member and no token to check. Whether today has
+ * already been done is the caller's business -- see fillDayFor() in Daily.gs,
+ * which holds the lock across both lists.
+ *
+ * Returns the number of chores written.
  */
-function fillTrough(payload) {
-  payload = payload || {};
-  var me = requireApprover(payload.memberToken);
+function fillTroughFor(householdId, actorId) {
+  var items = troughItems(householdId);
+  if (!items.length) return 0;
 
-  var lock = LockService.getScriptLock();
-  lock.waitLock(30000);
-  try {
-    var today = todayStr();
+  var people = findAll(CONFIG.SHEET_MEMBERS, { householdId: householdId })
+    .filter(function (m) { return String(m.active) !== 'false'; });
+  if (!people.length) return 0;
 
-    var already = findAll(CONFIG.SHEET_CHORES, { householdId: me.householdId })
-      .filter(function (c) {
-        return c.troughId && String(c.dueDate).slice(0, 10) === today;
-      });
+  var today = todayStr();
+  var plan = planTrough(items, people, yesterdayAssignments(householdId));
 
-    if (already.length && !payload.again) {
-      throw new Error('ALREADY_FILLED:' + already.length);
-    }
-
-    var items = troughItems(me.householdId);
-    if (!items.length) {
-      throw new Error('There is nothing on the list yet. Add some chores first.');
-    }
-
-    var people = findAll(CONFIG.SHEET_MEMBERS, { householdId: me.householdId })
-      .filter(function (m) { return String(m.active) !== 'false'; });
-    if (!people.length) throw new Error('There is nobody to give them to.');
-
-    var plan = planTrough(items, people, yesterdayAssignments(me.householdId));
-
-    plan.forEach(function (row) {
-      insert(CONFIG.SHEET_CHORES, {
-        choreId: newId('c'),
-        householdId: me.householdId,
-        title: row.item.title,
-        notes: row.item.notes,
-        category: row.item.category,
-        points: row.item.points,
-        status: STATUS.CLAIMED,
-        createdBy: me.memberId,
-        createdAt: stamp(),
-        assigneeId: row.member.memberId,
-        claimedAt: stamp(),
-        startedAt: '',
-        submittedAt: '',
-        approvedBy: '',
-        approvedAt: '',
-        dueDate: today,
-        recurrence: '',
-        reviewNote: '',
-        troughId: row.item.troughId
-      });
+  plan.forEach(function (row) {
+    insert(CONFIG.SHEET_CHORES, {
+      choreId: newId('c'),
+      householdId: householdId,
+      title: row.item.title,
+      notes: row.item.notes,
+      category: row.item.category,
+      points: row.item.points,
+      status: STATUS.CLAIMED,
+      createdBy: actorId || '',
+      createdAt: stamp(),
+      assigneeId: row.member.memberId,
+      claimedAt: stamp(),
+      startedAt: '',
+      submittedAt: '',
+      approvedBy: '',
+      approvedAt: '',
+      dueDate: today,
+      recurrence: '',
+      reviewNote: '',
+      troughId: row.item.troughId,
+      styId: ''
     });
+  });
 
-    logAction(me.householdId, '', me.memberId, 'trough_filled',
-              plan.length + ' chores to ' + countPeople(plan) + ' people');
-  } finally {
-    lock.releaseLock();
-  }
-  return loadBoard(payload);
-}
-
-function countPeople(plan) {
-  var seen = {};
-  plan.forEach(function (r) { seen[r.member.memberId] = true; });
-  return Object.keys(seen).length;
+  return plan.length;
 }
 
 /**
