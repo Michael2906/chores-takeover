@@ -1,0 +1,1211 @@
+<script>
+/* ===================================================================
+   Chore Boar -- the whole client.
+   An Apps Script web app serves no static files, so this is one classic
+   script rather than the ES modules the old build used. No import/export:
+   relative module paths cannot resolve inside the HtmlService sandbox.
+   =================================================================== */
+(function () {
+  'use strict';
+
+  // -----------------------------------------------------------------
+  // Remembering the device
+  // -----------------------------------------------------------------
+
+  /**
+   * localStorage, with a memory fallback.
+   *
+   * The app runs in an iframe on a googleusercontent.com origin, which makes
+   * it third-party storage. Safari's tracking prevention blocks that outright,
+   * and so does any browser set to refuse third-party cookies -- and a bare
+   * localStorage read there THROWS rather than returning null. Falling back to
+   * memory costs those users a sign-in per visit instead of a broken app.
+   */
+  var store = (function () {
+    var mem = {};
+    var ok = false;
+    try {
+      window.localStorage.setItem('cb.probe', '1');
+      window.localStorage.removeItem('cb.probe');
+      ok = true;
+    } catch (e) {
+      ok = false;
+    }
+    return {
+      durable: ok,
+      get: function (k) {
+        try { return ok ? window.localStorage.getItem(k) : (mem[k] || null); }
+        catch (e) { return mem[k] || null; }
+      },
+      set: function (k, v) {
+        try { if (ok) window.localStorage.setItem(k, v); else mem[k] = v; }
+        catch (e) { mem[k] = v; }
+      },
+      del: function (k) {
+        try { if (ok) window.localStorage.removeItem(k); delete mem[k]; }
+        catch (e) { delete mem[k]; }
+      }
+    };
+  })();
+
+  var TOKENS = {
+    get household() { return store.get('cb.householdToken') || ''; },
+    set household(v) { v ? store.set('cb.householdToken', v)
+                         : store.del('cb.householdToken'); },
+    get member() { return store.get('cb.memberToken') || ''; },
+    set member(v) { v ? store.set('cb.memberToken', v)
+                      : store.del('cb.memberToken'); }
+  };
+
+  // -----------------------------------------------------------------
+  // Talking to the server
+  // -----------------------------------------------------------------
+
+  /**
+   * One call, one shape. Tokens ride along on every request so the server
+   * decides what the caller may do -- the client never decides for itself.
+   */
+  function api(action, payload) {
+    var body = payload || {};
+    body.householdToken = TOKENS.household;
+    body.memberToken = TOKENS.member;
+
+    return new Promise(function (resolve, reject) {
+      google.script.run
+        .withSuccessHandler(function (res) {
+          if (res && res.ok) { resolve(res.data); return; }
+          var msg = (res && res.error) || 'Something went wrong.';
+          if (msg === 'SIGNED_OUT') {
+            // The token lapsed under us. Back to whichever screen fits.
+            TOKENS.member = '';
+            boot();
+            reject(new Error('SIGNED_OUT'));
+            return;
+          }
+          reject(new Error(msg));
+        })
+        .withFailureHandler(function (err) {
+          reject(new Error(
+            (err && err.message) ||
+            'Could not reach the server. Check your connection.'));
+        })
+        .call(action, body);
+    });
+  }
+
+  // -----------------------------------------------------------------
+  // State
+  // -----------------------------------------------------------------
+
+  var state = {
+    household: null,
+    members: [],
+    me: null,
+    chores: [],
+    categories: [],
+    pointPresets: [],
+    tab: 'community-pool',
+    query: ''
+  };
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  function esc(s) {
+    return String(s === undefined || s === null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function initials(name) {
+    var parts = String(name || '?').trim().split(/\s+/);
+    return ((parts[0] || '?')[0] + (parts.length > 1 ? parts[parts.length - 1][0] : ''))
+      .toUpperCase();
+  }
+
+  // -----------------------------------------------------------------
+  // Toast
+  // -----------------------------------------------------------------
+
+  var toastTimer = null;
+
+  function toast(msg, kind) {
+    var el = $('toast');
+    el.textContent = msg;
+    el.className = 'toast' + (kind ? ' ' + kind : '');
+    el.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.hidden = true; }, 3600);
+  }
+
+  function fail(err) {
+    if (err && err.message === 'SIGNED_OUT') return;
+    toast((err && err.message) || String(err), 'bad');
+  }
+
+  /** Disables a button while its request is in flight. */
+  function busy(btn, on) {
+    if (!btn) return;
+    btn.disabled = !!on;
+    if (on) {
+      btn.dataset.label = btn.textContent;
+      btn.textContent = '…';
+    } else if (btn.dataset.label) {
+      btn.textContent = btn.dataset.label;
+    }
+  }
+
+  // -----------------------------------------------------------------
+  // Screens
+  // -----------------------------------------------------------------
+
+  function show(which) {
+    ['splash', 'gate', 'picker', 'app'].forEach(function (id) {
+      $(id).hidden = (id !== which);
+    });
+  }
+
+  /** Decides which screen to show, from whatever the device remembered. */
+  function boot() {
+    show('splash');
+    api('resumeSession', {})
+      .then(function (data) {
+        if (!data.signedIn) {
+          TOKENS.household = '';
+          TOKENS.member = '';
+          show('gate');
+          return;
+        }
+        state.household = data.household;
+        state.members = data.members || [];
+
+        if (data.me) {
+          state.me = data.me;
+          return refresh().then(function () { show('app'); });
+        }
+        renderPicker();
+        show('picker');
+      })
+      .catch(function (err) {
+        if (err && err.message === 'SIGNED_OUT') return;
+        show('gate');
+        toast(err.message, 'bad');
+      });
+  }
+
+  // -----------------------------------------------------------------
+  // Screen 1 -- sign in / create household
+  // -----------------------------------------------------------------
+
+  function wireGate() {
+    var signinBtn = $('seg-signin');
+    var createBtn = $('seg-create');
+
+    function pick(which) {
+      var isSignin = which === 'signin';
+      signinBtn.classList.toggle('active', isSignin);
+      createBtn.classList.toggle('active', !isSignin);
+      signinBtn.setAttribute('aria-selected', String(isSignin));
+      createBtn.setAttribute('aria-selected', String(!isSignin));
+      $('form-signin').hidden = !isSignin;
+      $('form-create').hidden = isSignin;
+    }
+
+    signinBtn.addEventListener('click', function () { pick('signin'); });
+    createBtn.addEventListener('click', function () { pick('create'); });
+
+    $('form-signin').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var f = e.target;
+      var btn = f.querySelector('button[type=submit]');
+      var err = $('signin-error');
+      err.hidden = true;
+      busy(btn, true);
+
+      api('signInHousehold', {
+        email: f.email.value,
+        password: f.password.value,
+        deviceLabel: deviceLabel()
+      }).then(function (data) {
+        TOKENS.household = data.householdToken;
+        TOKENS.member = '';
+        state.household = data.household;
+        state.members = data.members || [];
+        f.password.value = '';
+        renderPicker();
+        show('picker');
+      }).catch(function (e2) {
+        err.textContent = e2.message;
+        err.hidden = false;
+      }).then(function () { busy(btn, false); });
+    });
+
+    $('form-create').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var f = e.target;
+      var btn = f.querySelector('button[type=submit]');
+      var err = $('create-error');
+      err.hidden = true;
+      busy(btn, true);
+
+      api('createHousehold', {
+        householdName: f.householdName.value,
+        ownerName: f.ownerName.value,
+        email: f.email.value,
+        password: f.password.value,
+        deviceLabel: deviceLabel()
+      }).then(function (data) {
+        TOKENS.household = data.householdToken;
+        TOKENS.member = '';
+        state.household = data.household;
+        state.members = data.members || [];
+        f.password.value = '';
+        renderPicker();
+        show('picker');
+        toast('Household created. Tap your name to start.', 'good');
+      }).catch(function (e2) {
+        err.textContent = e2.message;
+        err.hidden = false;
+      }).then(function () { busy(btn, false); });
+    });
+  }
+
+  /** A rough name for this device, so the Sessions sheet is readable. */
+  function deviceLabel() {
+    var ua = navigator.userAgent || '';
+    var kind = /iPhone|Android.*Mobile/.test(ua) ? 'Phone'
+             : /iPad|Tablet/.test(ua) ? 'Tablet' : 'Computer';
+    var os = /Windows/.test(ua) ? 'Windows'
+           : /Mac OS X/.test(ua) ? 'Mac'
+           : /Android/.test(ua) ? 'Android'
+           : /iPhone|iPad|iPod/.test(ua) ? 'iOS' : '';
+    return (os ? os + ' ' : '') + kind;
+  }
+
+  // -----------------------------------------------------------------
+  // Screen 2 -- who is using this device
+  // -----------------------------------------------------------------
+
+  function renderPicker() {
+    $('picker-household').textContent =
+      state.household ? state.household.name : "Who's this?";
+
+    $('member-grid').innerHTML = state.members.map(function (m) {
+      return '' +
+        '<button class="member-tile" data-member="' + esc(m.memberId) + '">' +
+          '<span class="avatar" style="background:' + esc(m.color || '#02407d') + '">' +
+            esc(initials(m.name)) +
+          '</span>' +
+          '<span class="name">' + esc(m.name) + '</span>' +
+          (m.canApprove ? '<span class="role">Parent</span>' : '') +
+          (m.hasPin ? '<span class="lock">PIN</span>' : '') +
+        '</button>';
+    }).join('');
+  }
+
+  function wirePicker() {
+    $('member-grid').addEventListener('click', function (e) {
+      var tile = e.target.closest('[data-member]');
+      if (!tile) return;
+      var id = tile.dataset.member;
+      var m = state.members.filter(function (x) { return x.memberId === id; })[0];
+      if (!m) return;
+
+      if (m.hasPin) { askPin(m); return; }
+      enterAs(m.memberId, '');
+    });
+
+    $('picker-signout').addEventListener('click', function () {
+      confirmModal(
+        'Sign this device out?',
+        'You will need the household email and password to get back in.',
+        'Sign out',
+        function () {
+          api('signOutDevice', {}).then(function () {
+            TOKENS.household = '';
+            TOKENS.member = '';
+            show('gate');
+          }).catch(fail);
+        });
+    });
+  }
+
+  /** Completes the pick and lands on the board. */
+  function enterAs(memberId, pin, onError) {
+    return api('pickMember', { memberId: memberId, pin: pin })
+      .then(function (data) {
+        TOKENS.member = data.memberToken;
+        state.me = data.me;
+        return refresh();
+      })
+      .then(function () {
+        closeModal();
+        show('app');
+      })
+      .catch(function (err) {
+        if (onError) onError(err); else fail(err);
+      });
+  }
+
+  /** The PIN pad. Deliberately big buttons -- children use this on a phone. */
+  function askPin(member) {
+    var len = CONFIG_CLIENT.pinLength;
+    var entered = '';
+
+    var keys = ['1','2','3','4','5','6','7','8','9','back','0','go'];
+
+    openModal(
+      esc(member.name),
+      '<p class="form-hint" style="text-align:center">Enter your PIN</p>' +
+      '<div class="pin-dots" id="pin-dots"></div>' +
+      '<p class="form-error" id="pin-error" role="alert" hidden></p>' +
+      '<div class="pin-pad">' +
+        keys.map(function (k) {
+          if (k === 'back') return '<button class="pin-key wide" data-pin="back">⌫</button>';
+          if (k === 'go') return '<button class="pin-key wide" data-pin="go">OK</button>';
+          return '<button class="pin-key" data-pin="' + k + '">' + k + '</button>';
+        }).join('') +
+      '</div>',
+      [{ label: 'Cancel', kind: 'btn-secondary', act: closeModal }]
+    );
+
+    function paint() {
+      var dots = [];
+      for (var i = 0; i < len; i++) {
+        dots.push('<span class="pin-dot' + (i < entered.length ? ' filled' : '') + '"></span>');
+      }
+      $('pin-dots').innerHTML = dots.join('');
+    }
+    paint();
+
+    function submit() {
+      if (entered.length !== len) return;
+      var err = $('pin-error');
+      err.hidden = true;
+      enterAs(member.memberId, entered, function (e) {
+        entered = '';
+        paint();
+        err.textContent = e.message;
+        err.hidden = false;
+      });
+    }
+
+    document.querySelector('.pin-pad').addEventListener('click', function (e) {
+      var k = e.target.closest('[data-pin]');
+      if (!k) return;
+      var v = k.dataset.pin;
+
+      if (v === 'back') entered = entered.slice(0, -1);
+      else if (v === 'go') { submit(); return; }
+      else if (entered.length < len) entered += v;
+
+      paint();
+      // Filling the last digit submits, so nobody has to find OK.
+      if (entered.length === len) submit();
+    });
+
+    // A physical keyboard should work too.
+    var onKey = function (e) {
+      if (/^[0-9]$/.test(e.key)) {
+        if (entered.length < len) { entered += e.key; paint(); }
+        if (entered.length === len) submit();
+      } else if (e.key === 'Backspace') {
+        entered = entered.slice(0, -1); paint();
+      } else if (e.key === 'Enter') { submit(); }
+    };
+    document.addEventListener('keydown', onKey);
+    modalCleanup = function () { document.removeEventListener('keydown', onKey); };
+  }
+
+  // -----------------------------------------------------------------
+  // Screen 3 -- the board
+  // -----------------------------------------------------------------
+
+  /** Pulls the whole board and repaints. */
+  function refresh() {
+    return api('loadBoard', {}).then(applyBoard);
+  }
+
+  function applyBoard(data) {
+    state.me = data.me;
+    state.members = data.members || [];
+    state.chores = data.chores || [];
+    state.categories = data.categories || [];
+    state.pointPresets = data.pointPresets || [];
+    renderApp();
+    return data;
+  }
+
+  function renderApp() {
+    $('header-household').textContent =
+      state.household ? state.household.name : '';
+
+    var me = state.me || {};
+    $('chip-dot').style.background = me.color || '#02407d';
+    $('chip-dot').textContent = initials(me.name);
+    $('chip-name').textContent = me.name || '';
+    $('chip-points').textContent = (me.points || 0) + 'p';
+
+    // Only a parent account gets the account-management entries.
+    var canManage = !!me.canApprove;
+    document.querySelectorAll('[data-menu=accounts]').forEach(function (b) {
+      b.hidden = !canManage;
+    });
+    document.querySelectorAll('[data-menu=password]').forEach(function (b) {
+      b.hidden = me.role !== 'owner';
+    });
+
+    renderCounts();
+    renderContent();
+  }
+
+  // --- Tab bucketing ------------------------------------------------
+
+  /**
+   * Which tab a chore belongs on for the person looking at it.
+   *
+   * A parent sees everybody's work in progress and everything awaiting
+   * approval; anyone else sees only their own. Done is shared -- the point of
+   * a household board is that finished work is visible.
+   */
+  function choresFor(tabId) {
+    var me = state.me || {};
+    var mine = function (c) { return c.assigneeId === me.memberId; };
+
+    return state.chores.filter(function (c) {
+      switch (tabId) {
+        case 'community-pool':     return c.status === 'pool';
+        case 'my-chores':          return c.status === 'claimed' && mine(c);
+        case 'in-progress':        return c.status === 'in_progress' &&
+                                          (me.canApprove || mine(c));
+        case 'ready-for-approval': return c.status === 'submitted' &&
+                                          (me.canApprove || mine(c));
+        case 'done':               return c.status === 'done';
+        default: return false;
+      }
+    });
+  }
+
+  function renderCounts() {
+    ['community-pool', 'my-chores', 'in-progress', 'ready-for-approval', 'done']
+      .forEach(function (id) {
+        var n = choresFor(id).length;
+        var badge = $(id).querySelector('.tab-count');
+        badge.textContent = n;
+        badge.classList.toggle('show', n > 0);
+        // Approvals are the one queue somebody is actively waiting on.
+        badge.classList.toggle(
+          'alert', id === 'ready-for-approval' && n > 0 &&
+                   !!(state.me && state.me.canApprove));
+      });
+  }
+
+  function matchesQuery(c) {
+    if (!state.query) return true;
+    var q = state.query.toLowerCase();
+    return [c.title, c.notes, c.category, c.assigneeName, c.createdByName]
+      .join(' ').toLowerCase().indexOf(q) >= 0;
+  }
+
+  function renderContent() {
+    var list = choresFor(state.tab).filter(matchesQuery);
+    var field = $('content-field');
+
+    if (!list.length) {
+      field.innerHTML = '<div class="chore-list">' + emptyState() + '</div>';
+      return;
+    }
+    field.innerHTML = '<div class="chore-list">' +
+      list.map(choreCard).join('') + '</div>';
+  }
+
+  function emptyState() {
+    if (state.query) {
+      return '<div class="empty"><h2>Nothing matches</h2>' +
+             '<p>No chore here mentions “' + esc(state.query) + '”.</p></div>';
+    }
+    var copy = {
+      'community-pool': ['The pool is empty',
+                         'Nothing is going spare. Add a chore with the + button.'],
+      'my-chores': ['You have not claimed anything',
+                    'Take something from the Community Pool.'],
+      'in-progress': ['Nothing on the go',
+                      'Chores you have started show up here.'],
+      'ready-for-approval': ['Nothing waiting',
+                             'Finished chores land here for a parent to approve.'],
+      'done': ['Nothing finished yet', 'Approved chores are kept here.']
+    }[state.tab] || ['Nothing here', ''];
+
+    return '<div class="empty"><h2>' + esc(copy[0]) + '</h2>' +
+           '<p>' + esc(copy[1]) + '</p></div>';
+  }
+
+  // --- One chore ----------------------------------------------------
+
+  function choreCard(c) {
+    var me = state.me || {};
+    var mine = c.assigneeId === me.memberId;
+
+    var meta = [];
+    if (c.category) meta.push('<span class="pill">' + esc(c.category) + '</span>');
+    if (c.assigneeName) {
+      meta.push('<span class="pill who" style="background:' +
+                esc(c.assigneeColor || '#02407d') + '">' +
+                esc(c.assigneeName) + '</span>');
+    }
+    if (c.dueDate) {
+      meta.push('<span class="pill ' + (c.overdue ? 'late' : 'due') + '">' +
+                (c.overdue ? 'Overdue ' : 'Due ') + esc(prettyDate(c.dueDate)) +
+                '</span>');
+    }
+    if (c.recurrence) {
+      meta.push('<span class="pill rep">' + esc(c.recurrence) + '</span>');
+    }
+    if (c.status === 'done' && c.approvedByName) {
+      meta.push('<span class="pill">OK’d by ' + esc(c.approvedByName) + '</span>');
+    }
+
+    return '' +
+      '<article class="chore s-' + esc(c.status) + (c.overdue ? ' overdue' : '') +
+              '" data-chore="' + esc(c.choreId) + '">' +
+        '<div class="chore-top">' +
+          '<h3 class="chore-title">' + esc(c.title) + '</h3>' +
+          (c.points ? '<span class="chore-points">' + c.points + 'p</span>' : '') +
+        '</div>' +
+        (c.notes ? '<p class="chore-notes">' + esc(c.notes) + '</p>' : '') +
+        (meta.length ? '<div class="chore-meta">' + meta.join('') + '</div>' : '') +
+        (c.reviewNote
+          ? '<p class="chore-note-back"><strong>Sent back:</strong> ' +
+            esc(c.reviewNote) + '</p>'
+          : '') +
+        '<div class="chore-actions">' + actionsFor(c, me, mine) + '</div>' +
+      '</article>';
+  }
+
+  function btn(act, label, kind) {
+    return '<button class="btn btn-sm ' + kind + '" data-act="' + act + '">' +
+           esc(label) + '</button>';
+  }
+
+  function actionsFor(c, me, mine) {
+    var out = [];
+    var boss = !!me.canApprove;
+
+    if (c.status === 'pool') {
+      out.push(btn('claim', 'Claim', 'btn-go'));
+      if (boss) out.push(btn('assign', 'Give to…', 'btn-secondary'));
+    } else if (c.status === 'claimed' && (mine || boss)) {
+      out.push(btn('start', 'Start', 'btn-primary'));
+      out.push(btn('submit', 'Mark done', 'btn-go'));
+      out.push(btn('release', 'Put back', 'btn-secondary'));
+    } else if (c.status === 'in_progress' && (mine || boss)) {
+      out.push(btn('submit', 'Mark done', 'btn-go'));
+      out.push(btn('pause', 'Pause', 'btn-secondary'));
+    } else if (c.status === 'submitted') {
+      if (boss) {
+        out.push(btn('approve', 'Approve', 'btn-go'));
+        out.push(btn('sendback', 'Send back', 'btn-warn'));
+      } else {
+        out.push('<span class="pill">Waiting for a parent</span>');
+      }
+    } else if (c.status === 'done' && boss) {
+      out.push(btn('reopen', 'Do it again', 'btn-secondary'));
+    }
+
+    // Editing: a parent always; anyone else only their own, still in the pool.
+    var canEdit = boss ||
+                  (c.createdBy === me.memberId && c.status === 'pool');
+    if (canEdit && c.status !== 'done') {
+      out.push(btn('edit', 'Edit', 'btn-secondary'));
+    }
+    if (canEdit) out.push(btn('delete', 'Delete', 'btn-quiet'));
+
+    return out.join('');
+  }
+
+  function prettyDate(iso) {
+    var d = new Date(iso + 'T12:00:00');
+    if (isNaN(d.getTime())) return iso;
+    var today = new Date(); today.setHours(12, 0, 0, 0);
+    var days = Math.round((d - today) / 86400000);
+    if (days === 0) return 'today';
+    if (days === 1) return 'tomorrow';
+    if (days === -1) return 'yesterday';
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+
+  // --- Board interactions -------------------------------------------
+
+  function wireApp() {
+    // Tabs
+    $('tab-strip').addEventListener('click', function (e) {
+      var tab = e.target.closest('.tab');
+      if (!tab) return;
+      document.querySelectorAll('.tab').forEach(function (t) {
+        t.classList.toggle('active', t === tab);
+        t.setAttribute('aria-selected', String(t === tab));
+      });
+      state.tab = tab.id;
+      renderContent();
+      $('content-field').scrollTop = 0;
+    });
+
+    // Search
+    var searchTimer = null;
+    $('search-box').addEventListener('input', function (e) {
+      clearTimeout(searchTimer);
+      var v = e.target.value;
+      searchTimer = setTimeout(function () {
+        state.query = v.trim();
+        renderContent();
+      }, 120);
+    });
+
+    $('search-clear').addEventListener('click', function () {
+      $('search-box').value = '';
+      state.query = '';
+      renderContent();
+      $('search-box').focus();
+    });
+
+    // Chore actions
+    $('content-field').addEventListener('click', function (e) {
+      var b = e.target.closest('[data-act]');
+      if (!b) return;
+      var card = b.closest('[data-chore]');
+      if (!card) return;
+      doAction(b.dataset.act, card.dataset.chore, b);
+    });
+
+    // Add
+    $('new-chore').addEventListener('click', function () { choreForm(null); });
+
+    // Account menu
+    var chip = $('account-chip');
+    var menu = $('account-menu');
+
+    chip.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var open = menu.hidden;
+      menu.hidden = !open;
+      chip.setAttribute('aria-expanded', String(open));
+    });
+
+    document.addEventListener('click', function () {
+      if (!menu.hidden) {
+        menu.hidden = true;
+        chip.setAttribute('aria-expanded', 'false');
+      }
+    });
+
+    menu.addEventListener('click', function (e) {
+      var item = e.target.closest('[data-menu]');
+      if (!item) return;
+      menu.hidden = true;
+      chip.setAttribute('aria-expanded', 'false');
+      menuAction(item.dataset.menu);
+    });
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !menu.hidden) menu.hidden = true;
+    });
+  }
+
+  function doAction(act, choreId, button) {
+    var c = state.chores.filter(function (x) { return x.choreId === choreId; })[0];
+
+    if (act === 'edit') { choreForm(c); return; }
+    if (act === 'assign') { assignForm(c); return; }
+    if (act === 'sendback') { sendBackForm(c); return; }
+    if (act === 'delete') {
+      confirmModal('Delete this chore?', c ? c.title : '', 'Delete', function () {
+        run('deleteChore', { choreId: choreId }, 'Deleted.');
+      }, true);
+      return;
+    }
+
+    var map = {
+      claim:   ['claimChore',   'Claimed. It is yours.'],
+      release: ['releaseChore', 'Back in the pool.'],
+      start:   ['startChore',   'Started.'],
+      pause:   ['pauseChore',   'Paused.'],
+      submit:  ['submitChore',  'Sent for approval.'],
+      approve: ['approveChore', 'Approved.'],
+      reopen:  ['reopenChore',  'Back in the pool.']
+    }[act];
+    if (!map) return;
+
+    busy(button, true);
+    api(map[0], { choreId: choreId })
+      .then(function (data) { applyBoard(data); toast(map[1], 'good'); })
+      .catch(function (err) {
+        fail(err);
+        // A rejected transition usually means somebody else moved first, so
+        // the card in front of them is stale. Repaint from the server.
+        refresh().catch(function () {});
+      })
+      .then(function () { busy(button, false); });
+  }
+
+  /** Runs an action, repaints from its reply, and says so. */
+  function run(action, payload, okMsg) {
+    return api(action, payload)
+      .then(function (data) {
+        applyBoard(data);
+        closeModal();
+        if (okMsg) toast(okMsg, 'good');
+      })
+      .catch(fail);
+  }
+
+  function menuAction(which) {
+    if (which === 'switch') {
+      api('releaseMember', {}).then(function () {
+        TOKENS.member = '';
+        state.me = null;
+        renderPicker();
+        show('picker');
+      }).catch(fail);
+
+    } else if (which === 'signout') {
+      confirmModal('Sign this device out?',
+        'You will need the household email and password to get back in.',
+        'Sign out', function () {
+          api('signOutDevice', {}).then(function () {
+            TOKENS.household = '';
+            TOKENS.member = '';
+            closeModal();
+            show('gate');
+          }).catch(fail);
+        });
+
+    } else if (which === 'accounts') {
+      accountsForm();
+    } else if (which === 'password') {
+      passwordForm();
+    }
+  }
+
+  // -----------------------------------------------------------------
+  // Modals
+  // -----------------------------------------------------------------
+
+  var modalCleanup = null;
+
+  function openModal(title, bodyHtml, buttons) {
+    closeModal();
+
+    var acts = (buttons || []).map(function (b, i) {
+      return '<button class="btn ' + (b.kind || 'btn-secondary') +
+             '" data-modal-btn="' + i + '">' + esc(b.label) + '</button>';
+    }).join('');
+
+    var root = $('modal-root');
+    root.innerHTML =
+      '<div class="backdrop" id="backdrop">' +
+        '<div class="modal" role="dialog" aria-modal="true">' +
+          '<div class="modal-head">' +
+            '<h2>' + title + '</h2>' +
+            '<button class="modal-close" aria-label="Close">×</button>' +
+          '</div>' +
+          '<div class="modal-body">' + bodyHtml + '</div>' +
+          (acts ? '<div class="modal-actions">' + acts + '</div>' : '') +
+        '</div>' +
+      '</div>';
+
+    root.querySelector('.modal-close').addEventListener('click', closeModal);
+
+    root.querySelector('.backdrop').addEventListener('mousedown', function (e) {
+      if (e.target.id === 'backdrop') closeModal();
+    });
+
+    (buttons || []).forEach(function (b, i) {
+      var el = root.querySelector('[data-modal-btn="' + i + '"]');
+      if (el) el.addEventListener('click', function () { b.act(el); });
+    });
+
+    var onEsc = function (e) { if (e.key === 'Escape') closeModal(); };
+    document.addEventListener('keydown', onEsc);
+    var prevCleanup = modalCleanup;
+    modalCleanup = function () {
+      document.removeEventListener('keydown', onEsc);
+      if (prevCleanup) prevCleanup();
+    };
+
+    // Focus the first real control so a keyboard user starts inside.
+    var first = root.querySelector('input, select, textarea, button');
+    if (first) first.focus();
+  }
+
+  function closeModal() {
+    if (modalCleanup) { modalCleanup(); modalCleanup = null; }
+    $('modal-root').innerHTML = '';
+  }
+
+  function confirmModal(title, body, okLabel, onOk, danger) {
+    openModal(esc(title),
+      body ? '<p>' + esc(body) + '</p>' : '',
+      [
+        { label: 'Cancel', kind: 'btn-secondary', act: closeModal },
+        { label: okLabel, kind: danger ? 'btn-danger' : 'btn-primary',
+          act: onOk }
+      ]);
+  }
+
+  // --- New / edit a chore -------------------------------------------
+
+  function choreForm(existing) {
+    var editing = !!existing;
+    var c = existing || {};
+    var boss = !!(state.me && state.me.canApprove);
+
+    var cats = state.categories.map(function (x) {
+      return '<option value="' + esc(x) + '"></option>';
+    }).join('');
+
+    var pts = state.pointPresets.map(function (p) {
+      return '<button type="button" class="chip-pick' +
+             (Number(c.points) === p ? ' on' : '') +
+             '" data-points="' + p + '">' + p + 'p</button>';
+    }).join('');
+
+    var people = state.members.map(function (m) {
+      return '<option value="' + esc(m.memberId) + '"' +
+             (c.assigneeId === m.memberId ? ' selected' : '') + '>' +
+             esc(m.name) + '</option>';
+    }).join('');
+
+    openModal(editing ? 'Edit chore' : 'New chore',
+      '<form class="form" id="chore-form">' +
+        '<label class="field"><span>What needs doing?</span>' +
+          '<input name="title" required maxlength="120" ' +
+                 'value="' + esc(c.title || '') + '" ' +
+                 'placeholder="Load the dishwasher" /></label>' +
+
+        '<label class="field"><span>Details <small>(optional)</small></span>' +
+          '<textarea name="notes" maxlength="1000">' + esc(c.notes || '') +
+          '</textarea></label>' +
+
+        '<label class="field"><span>Category</span>' +
+          '<input name="category" list="cat-list" maxlength="40" ' +
+                 'value="' + esc(c.category || '') + '" />' +
+          '<datalist id="cat-list">' + cats + '</datalist></label>' +
+
+        (boss
+          ? '<div class="field"><span>Points</span>' +
+              '<div class="chips" id="point-chips">' + pts +
+                '<button type="button" class="chip-pick" data-points="0">None</button>' +
+              '</div>' +
+              '<input type="hidden" name="points" value="' +
+                     (Number(c.points) || 0) + '" /></div>'
+          : '<p class="form-hint">A parent sets the points on a chore.</p>') +
+
+        '<label class="field"><span>Due <small>(optional)</small></span>' +
+          '<input type="date" name="dueDate" value="' + esc(c.dueDate || '') +
+          '" /></label>' +
+
+        '<label class="field"><span>Repeats</span>' +
+          '<select name="recurrence">' +
+            ['', 'daily', 'weekly', 'monthly'].map(function (r) {
+              return '<option value="' + r + '"' +
+                     ((c.recurrence || '') === r ? ' selected' : '') + '>' +
+                     (r ? r.charAt(0).toUpperCase() + r.slice(1) : 'Does not repeat') +
+                     '</option>';
+            }).join('') +
+          '</select>' +
+          '<small>A repeating chore reposts itself once approved.</small>' +
+        '</label>' +
+
+        (boss && !editing
+          ? '<label class="field"><span>Give it to</span>' +
+              '<select name="assigneeId"><option value="">' +
+              'Anyone — put it in the pool</option>' + people +
+              '</select></label>'
+          : '') +
+      '</form>',
+      [
+        { label: 'Cancel', kind: 'btn-secondary', act: closeModal },
+        { label: editing ? 'Save' : 'Post it', kind: 'btn-primary',
+          act: function (btn) {
+            var f = $('chore-form');
+            if (!f.reportValidity()) return;
+
+            var payload = {
+              title: f.title.value,
+              notes: f.notes.value,
+              category: f.category.value,
+              dueDate: f.dueDate.value,
+              recurrence: f.recurrence.value
+            };
+            if (f.points) payload.points = Number(f.points.value) || 0;
+            if (f.assigneeId) payload.assigneeId = f.assigneeId.value;
+
+            busy(btn, true);
+            if (editing) {
+              payload.choreId = c.choreId;
+              run('updateChore', payload, 'Saved.')
+                .then(function () { busy(btn, false); });
+            } else {
+              run('createChore', payload, 'Posted.')
+                .then(function () { busy(btn, false); });
+            }
+          } }
+      ]);
+
+    var chips = $('point-chips');
+    if (chips) {
+      chips.addEventListener('click', function (e) {
+        var b = e.target.closest('[data-points]');
+        if (!b) return;
+        chips.querySelectorAll('.chip-pick').forEach(function (x) {
+          x.classList.remove('on');
+        });
+        b.classList.add('on');
+        $('chore-form').points.value = b.dataset.points;
+      });
+    }
+  }
+
+  // --- Give a chore to somebody -------------------------------------
+
+  function assignForm(c) {
+    if (!c) return;
+    openModal('Give “' + esc(c.title) + '” to',
+      '<div class="member-grid" id="assign-grid">' +
+        state.members.map(function (m) {
+          return '<button class="member-tile" data-assign="' + esc(m.memberId) + '">' +
+                   '<span class="avatar" style="background:' + esc(m.color) + '">' +
+                     esc(initials(m.name)) + '</span>' +
+                   '<span class="name">' + esc(m.name) + '</span>' +
+                 '</button>';
+        }).join('') +
+      '</div>',
+      [{ label: 'Cancel', kind: 'btn-secondary', act: closeModal }]);
+
+    $('assign-grid').addEventListener('click', function (e) {
+      var t = e.target.closest('[data-assign]');
+      if (!t) return;
+      run('assignChore', { choreId: c.choreId, assigneeId: t.dataset.assign },
+          'Handed over.');
+    });
+  }
+
+  // --- Send a chore back --------------------------------------------
+
+  function sendBackForm(c) {
+    if (!c) return;
+    openModal('Send back “' + esc(c.title) + '”',
+      '<form class="form" id="back-form">' +
+        '<label class="field"><span>What still needs doing?</span>' +
+          '<textarea name="note" maxlength="500" ' +
+                    'placeholder="The corners were missed."></textarea>' +
+          '<small>They will see this on the chore.</small></label>' +
+      '</form>',
+      [
+        { label: 'Cancel', kind: 'btn-secondary', act: closeModal },
+        { label: 'Send back', kind: 'btn-warn', act: function (btn) {
+            busy(btn, true);
+            run('sendBackChore',
+                { choreId: c.choreId, note: $('back-form').note.value },
+                'Sent back.').then(function () { busy(btn, false); });
+          } }
+      ]);
+  }
+
+  // --- Manage sub-accounts ------------------------------------------
+
+  function accountsForm() {
+    var len = CONFIG_CLIENT.pinLength;
+
+    function rows() {
+      return state.members.map(function (m) {
+        return '<div class="roster-row" data-row="' + esc(m.memberId) + '">' +
+          '<span class="avatar" style="background:' + esc(m.color) +
+                 ';width:2.2rem;height:2.2rem;font-size:0.9rem">' +
+            esc(initials(m.name)) + '</span>' +
+          '<span class="who">' + esc(m.name) +
+            '<span class="sub"><br>' +
+              (m.role === 'owner' ? 'Account holder'
+                : m.canApprove ? 'Parent' : 'Member') +
+              (m.hasPin ? ' · has a PIN' : ' · no PIN') +
+              ' · ' + (m.points || 0) + 'p' +
+            '</span>' +
+          '</span>' +
+          (m.role === 'owner' ? '' :
+            '<button class="btn btn-sm btn-secondary" data-edit="' +
+              esc(m.memberId) + '">Edit</button>') +
+        '</div>';
+      }).join('');
+    }
+
+    openModal('Accounts in ' + esc(state.household ? state.household.name : ''),
+      '<div class="roster" id="roster">' + rows() + '</div>' +
+      '<hr style="margin:1rem 0;border:none;border-top:1px solid var(--line)">' +
+      '<form class="form" id="add-form">' +
+        '<label class="field"><span>Add somebody</span>' +
+          '<input name="name" placeholder="Name" maxlength="40" /></label>' +
+        '<label class="field"><span>PIN <small>(optional, ' + len +
+          ' digits)</small></span>' +
+          '<input name="pin" inputmode="numeric" pattern="[0-9]*" maxlength="' +
+            len + '" placeholder="Leave blank for none" /></label>' +
+        '<label class="field"><span>Can they approve chores?</span>' +
+          '<select name="role">' +
+            '<option value="member">No — they do chores</option>' +
+            '<option value="approver">Yes — a parent account</option>' +
+          '</select></label>' +
+      '</form>',
+      [
+        { label: 'Done', kind: 'btn-secondary', act: closeModal },
+        { label: 'Add', kind: 'btn-primary', act: function (btn) {
+            var f = $('add-form');
+            if (!f.name.value.trim()) { toast('Enter a name.', 'bad'); return; }
+            busy(btn, true);
+            api('addMember', {
+              name: f.name.value,
+              pin: f.pin.value,
+              role: f.role.value
+            }).then(function (data) {
+              state.members = data.members;
+              $('roster').innerHTML = rows();
+              f.reset();
+              renderApp();
+              toast('Added.', 'good');
+            }).catch(fail).then(function () { busy(btn, false); });
+          } }
+      ]);
+
+    $('roster').addEventListener('click', function (e) {
+      var b = e.target.closest('[data-edit]');
+      if (!b) return;
+      var m = state.members.filter(function (x) {
+        return x.memberId === b.dataset.edit;
+      })[0];
+      if (m) memberForm(m);
+    });
+  }
+
+  function memberForm(m) {
+    var len = CONFIG_CLIENT.pinLength;
+
+    openModal('Edit ' + esc(m.name),
+      '<form class="form" id="member-form">' +
+        '<label class="field"><span>Name</span>' +
+          '<input name="name" value="' + esc(m.name) + '" maxlength="40" /></label>' +
+        '<label class="field"><span>New PIN <small>(' + len +
+          ' digits)</small></span>' +
+          '<input name="pin" inputmode="numeric" pattern="[0-9]*" maxlength="' +
+            len + '" placeholder="' +
+            (m.hasPin ? 'Leave blank to keep the current one' : 'No PIN set') +
+            '" /></label>' +
+        '<label class="field"><span>Can they approve chores?</span>' +
+          '<select name="role">' +
+            '<option value="member"' + (m.canApprove ? '' : ' selected') +
+              '>No — they do chores</option>' +
+            '<option value="approver"' + (m.canApprove ? ' selected' : '') +
+              '>Yes — a parent account</option>' +
+          '</select></label>' +
+        (m.hasPin
+          ? '<label class="field" style="flex-direction:row;align-items:center;' +
+            'gap:0.5rem"><input type="checkbox" name="clearPin" ' +
+            'style="width:auto"><span>Remove their PIN</span></label>'
+          : '') +
+      '</form>',
+      [
+        { label: 'Cancel', kind: 'btn-secondary', act: function () {
+            accountsForm();
+          } },
+        { label: 'Turn off', kind: 'btn-danger', act: function () {
+            confirmModal('Turn off ' + m.name + '?',
+              'They disappear from the name list. Their finished chores stay.',
+              'Turn off', function () {
+                api('updateMember', { targetId: m.memberId, active: false })
+                  .then(function (data) {
+                    state.members = data.members;
+                    renderApp();
+                    accountsForm();
+                    toast('Turned off.', 'good');
+                  }).catch(fail);
+              }, true);
+          } },
+        { label: 'Save', kind: 'btn-primary', act: function (btn) {
+            var f = $('member-form');
+            var payload = {
+              targetId: m.memberId,
+              name: f.name.value,
+              role: f.role.value,
+              unlock: true
+            };
+            // '' clears the PIN, a value sets it, absent leaves it alone.
+            if (f.clearPin && f.clearPin.checked) payload.pin = '';
+            else if (f.pin.value.trim()) payload.pin = f.pin.value.trim();
+
+            busy(btn, true);
+            api('updateMember', payload).then(function (data) {
+              state.members = data.members;
+              renderApp();
+              accountsForm();
+              toast('Saved.', 'good');
+            }).catch(fail).then(function () { busy(btn, false); });
+          } }
+      ]);
+  }
+
+  // --- Change the household password ---------------------------------
+
+  function passwordForm() {
+    openModal('Change password',
+      '<form class="form" id="pw-form">' +
+        '<label class="field"><span>Current password</span>' +
+          '<input type="password" name="currentPassword" ' +
+                 'autocomplete="current-password" /></label>' +
+        '<label class="field"><span>New password</span>' +
+          '<input type="password" name="newPassword" ' +
+                 'autocomplete="new-password" minlength="' +
+                 CONFIG_CLIENT.minPassword + '" />' +
+          '<small>At least ' + CONFIG_CLIENT.minPassword +
+          ' characters. Every other device gets signed out.</small></label>' +
+      '</form>',
+      [
+        { label: 'Cancel', kind: 'btn-secondary', act: closeModal },
+        { label: 'Change it', kind: 'btn-primary', act: function (btn) {
+            var f = $('pw-form');
+            busy(btn, true);
+            api('changeHouseholdPassword', {
+              currentPassword: f.currentPassword.value,
+              newPassword: f.newPassword.value
+            }).then(function () {
+              closeModal();
+              toast('Password changed.', 'good');
+            }).catch(fail).then(function () { busy(btn, false); });
+          } }
+      ]);
+  }
+
+  // -----------------------------------------------------------------
+  // Start
+  // -----------------------------------------------------------------
+
+  function paintArt() {
+    ['splash-logo', 'gate-logo', 'header-logo'].forEach(function (id) {
+      var el = $(id);
+      if (el && typeof ART !== 'undefined' && ART.LOGO) {
+        el.style.backgroundImage = 'url("' + ART.LOGO + '")';
+      }
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', function () {
+    paintArt();
+    wireGate();
+    wirePicker();
+    wireApp();
+    boot();
+
+    if (!store.durable) {
+      // Worth saying out loud rather than letting it look like a bug.
+      setTimeout(function () {
+        toast('This browser will not remember you between visits.');
+      }, 1200);
+    }
+  });
+})();
+</script>

@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- Apps Script serves this page inside an iframe. Without base target
+         _top, every link would open inside that frame. -->
+    <base target="_top" />
+    <title><?= config.appName ?></title>
+    <?!= include('Styles'); ?>
+  </head>
+
+  <body>
+    <?!= include('Images'); ?>
+
+    <!-- Shown until the first resumeSession() answers, so nobody sees the
+         sign-in form flash up before we know they are already signed in. -->
+    <div id="splash" class="splash">
+      <div class="splash-mark" id="splash-logo"></div>
+      <div class="spinner" aria-hidden="true"></div>
+      <p class="splash-text">Waking the boar…</p>
+    </div>
+
+    <!-- ============================================================
+         Screen 1: no trusted device -- sign in or create a household
+         ============================================================ -->
+    <section id="gate" class="screen" hidden>
+      <div class="card gate-card">
+        <div class="gate-mark" id="gate-logo"></div>
+        <p class="gate-tagline"><?= config.tagline ?></p>
+
+        <div class="seg" role="tablist" aria-label="Sign in or create an account">
+          <button class="seg-btn active" id="seg-signin" role="tab"
+                  aria-selected="true">Sign in</button>
+          <button class="seg-btn" id="seg-create" role="tab"
+                  aria-selected="false">Create a household</button>
+        </div>
+
+        <!-- Sign in -->
+        <form id="form-signin" class="form" autocomplete="on">
+          <label class="field">
+            <span>Email</span>
+            <input type="email" name="email" autocomplete="username"
+                   required inputmode="email" />
+          </label>
+          <label class="field">
+            <span>Password</span>
+            <input type="password" name="password"
+                   autocomplete="current-password" required />
+          </label>
+          <p class="form-error" id="signin-error" role="alert" hidden></p>
+          <button type="submit" class="btn btn-primary btn-block">Sign in</button>
+          <p class="form-hint">
+            Signing in trusts this device for a while. After that you just tap
+            your name.
+          </p>
+        </form>
+
+        <!-- Create a household -->
+        <form id="form-create" class="form" autocomplete="on" hidden>
+          <label class="field">
+            <span>Household name</span>
+            <input type="text" name="householdName" placeholder="The Sewells"
+                   required maxlength="60" />
+          </label>
+          <label class="field">
+            <span>Your name</span>
+            <input type="text" name="ownerName" placeholder="Michael"
+                   autocomplete="name" required maxlength="40" />
+          </label>
+          <label class="field">
+            <span>Email</span>
+            <input type="email" name="email" autocomplete="username"
+                   required inputmode="email" />
+          </label>
+          <label class="field">
+            <span>Password</span>
+            <input type="password" name="password" autocomplete="new-password"
+                   required minlength="<?= config.minPassword ?>" />
+            <small>At least <?= config.minPassword ?> characters.</small>
+          </label>
+          <p class="form-error" id="create-error" role="alert" hidden></p>
+          <button type="submit" class="btn btn-primary btn-block">
+            Create household
+          </button>
+          <p class="form-hint">
+            You are the account holder. You add everyone else afterwards — they
+            never need an email address or a Google account of their own.
+          </p>
+        </form>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         Screen 2: device is trusted -- who is using it right now?
+         ============================================================ -->
+    <section id="picker" class="screen" hidden>
+      <div class="card picker-card">
+        <div class="picker-head">
+          <h1 id="picker-household">Who's this?</h1>
+          <button class="btn btn-quiet btn-sm" id="picker-signout">
+            Not your household?
+          </button>
+        </div>
+        <div class="member-grid" id="member-grid"></div>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         Screen 3: the board
+         ============================================================ -->
+    <div id="app" class="screen app" hidden>
+      <header id="header">
+        <div class="brand">
+          <div class="brand-mark" id="header-logo"></div>
+          <span class="brand-household" id="header-household"></span>
+        </div>
+
+        <div id="account-info">
+          <button class="chip" id="account-chip" aria-haspopup="true"
+                  aria-expanded="false">
+            <span class="chip-dot" id="chip-dot"></span>
+            <span class="chip-name" id="chip-name"></span>
+            <span class="chip-points" id="chip-points"></span>
+          </button>
+          <div class="menu" id="account-menu" hidden>
+            <button class="menu-item" data-menu="switch">Switch person</button>
+            <button class="menu-item" data-menu="accounts">
+              Manage accounts
+            </button>
+            <button class="menu-item" data-menu="password">
+              Change password
+            </button>
+            <button class="menu-item danger" data-menu="signout">
+              Sign this device out
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <nav id="tabs" role="tablist" aria-label="Chore lists">
+        <div class="tab-strip" id="tab-strip">
+          <button id="community-pool" class="tab active" role="tab"
+                  aria-selected="true">
+            Community Pool <span class="tab-count"></span>
+          </button>
+          <button id="my-chores" class="tab" role="tab" aria-selected="false">
+            My Chores <span class="tab-count"></span>
+          </button>
+          <button id="in-progress" class="tab" role="tab" aria-selected="false">
+            In Progress <span class="tab-count"></span>
+          </button>
+          <button id="ready-for-approval" class="tab" role="tab"
+                  aria-selected="false">
+            Ready for Approval <span class="tab-count"></span>
+          </button>
+          <button id="done" class="tab" role="tab" aria-selected="false">
+            Done <span class="tab-count"></span>
+          </button>
+        </div>
+
+        <div id="search">
+          <label class="sr-only" for="search-box">Search chores</label>
+          <input id="search-box" type="search" placeholder="Type to search…"
+                 autocomplete="off" />
+          <button id="search-clear" type="button" aria-label="Clear search">
+            ×
+          </button>
+        </div>
+      </nav>
+
+      <main id="content-field" role="tabpanel"></main>
+
+      <button class="fab" id="new-chore" aria-label="Add a chore">+</button>
+    </div>
+
+    <!-- Dialogs and transient bits -->
+    <div id="modal-root"></div>
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+    <script>
+      // Values from Config.gs that the client needs. Server-rendered so there
+      // is no extra round trip before the first paint.
+      // These use the force-print scriptlet, not the escaping one: the
+      // escaping form would turn the quotes JSON.stringify produces into
+      // &quot; and break this block.
+      var CONFIG_CLIENT = {
+        appName: <?!= JSON.stringify(config.appName) ?>,
+        pinLength: <?!= Number(config.pinLength) ?>,
+        minPassword: <?!= Number(config.minPassword) ?>
+      };
+    </script>
+    <?!= include('Scripts'); ?>
+  </body>
+</html>

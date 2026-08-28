@@ -1,0 +1,15 @@
+# clasp: per-user, points at whichever Apps Script project you created
+.clasp.json
+.clasprc.json
+
+# Python (tools/build_images.py)
+.venv/
+__pycache__/
+*.pyc
+
+# Local build output
+/build/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
