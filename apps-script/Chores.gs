@@ -77,7 +77,7 @@ function loadBoard(payload) {
     chores: live.concat(done),
     categories: CONFIG.CATEGORIES,
     pointPresets: CONFIG.POINT_PRESETS,
-    suggestions: CONFIG.SUGGESTIONS || []
+    suggestions: suggestionList()
   };
 }
 

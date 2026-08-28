@@ -18,7 +18,10 @@
     households: [],
     members: [],
     sessions: [],
-    chores: []
+    chores: [],
+    trough: [],
+    prizes: [],
+    redemptions: []
   };
 
   var seq = 0;
@@ -112,6 +115,27 @@
       reviewNote: 'The corners by the kettle were missed.'
     });
   }
+  // The daily list and a stocked prize pen, so both screens have something
+  // in them the moment the preview opens.
+  DB.trough = [
+    { troughId: 'tr1', title: 'Load the dishwasher', category: 'Kitchen', points: 3, notes: '' },
+    { troughId: 'tr2', title: 'Take the bins out',   category: 'Trash',   points: 2, notes: '' },
+    { troughId: 'tr3', title: 'Feed the pets',       category: 'Pets',    points: 2, notes: '' },
+    { troughId: 'tr4', title: 'Tidy the front room', category: 'Living Areas', points: 4, notes: '' },
+    { troughId: 'tr5', title: 'Hoover the stairs',   category: 'Living Areas', points: 6, notes: '' },
+    { troughId: 'tr6', title: 'Make your bed',       category: 'Bedroom', points: 1, notes: '' }
+  ];
+
+  DB.prizes = [
+    { prizeId: 'pz1', name: 'Ice cream',        notes: 'Any flavour.',      cost: 15,  stock: '' },
+    { prizeId: 'pz2', name: 'Stay up an hour',  notes: 'Weekends only.',    cost: 30,  stock: '' },
+    { prizeId: 'pz3', name: 'Pick the film',    notes: '',                  cost: 20,  stock: '' },
+    { prizeId: 'pz4', name: 'Trip to the shop', notes: 'Five pounds.',      cost: 60,  stock: 2 },
+    { prizeId: 'pz5', name: 'Skip one chore',   notes: 'Once a week.',      cost: 40,  stock: 0 }
+  ];
+
+  DB.redemptions = [];
+
   seed();
 
   // ---------------------------------------------------------------
@@ -165,12 +189,70 @@
     return m;
   }
 
+  function m_role_approver(m) { return m.role === 'approver' || m.role === 'owner'; }
+
   function requireOwner(token) {
     var m = requireMember(token);
     if (m.role !== 'owner') {
       throw new Error('Only the account holder can manage accounts.');
     }
     return m;
+  }
+
+  function today() {
+    var d = new Date();
+    return d.getFullYear() + '-' +
+           String(d.getMonth() + 1).padStart(2, '0') + '-' +
+           String(d.getDate()).padStart(2, '0');
+  }
+
+  function shuffle(a) {
+    for (var i = a.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var t = a[i]; a[i] = a[j]; a[j] = t;
+    }
+    return a;
+  }
+
+  var CHILD_WEIGHT = 2;
+
+  /** The same target-share algorithm as Trough.gs. */
+  function planTrough(items, people, recent) {
+    var queue = shuffle(items.slice()).sort(function (a, b) {
+      return Number(b.points || 0) - Number(a.points || 0);
+    });
+
+    var total = 0;
+    queue.forEach(function (i) { total += Number(i.points || 0); });
+
+    var weightOf = {}, sumW = 0;
+    people.forEach(function (m) {
+      var w = (m.role === 'owner' || m.role === 'approver') ? 1 : CHILD_WEIGHT;
+      weightOf[m.memberId] = w; sumW += w;
+    });
+
+    var target = {}, given = {};
+    people.forEach(function (m) {
+      target[m.memberId] = sumW ? total * weightOf[m.memberId] / sumW : 0;
+      given[m.memberId] = 0;
+    });
+
+    var plan = [];
+    queue.forEach(function (item) {
+      var blocked = recent[item.troughId] || {};
+      var elig = people.filter(function (m) { return !blocked[m.memberId]; });
+      if (!elig.length) elig = people.slice();
+      elig = shuffle(elig);
+
+      var best = elig[0], bestNeed = target[best.memberId] - given[best.memberId];
+      for (var i = 1; i < elig.length; i++) {
+        var need = target[elig[i].memberId] - given[elig[i].memberId];
+        if (need > bestNeed) { best = elig[i]; bestNeed = need; }
+      }
+      given[best.memberId] += Number(item.points || 0);
+      plan.push({ item: item, member: best });
+    });
+    return plan;
   }
 
   function ownChore(hid, cid) {
@@ -509,6 +591,209 @@
       if (c.status === 'pool') c.status = 'claimed';
       c.claimedAt = c.claimedAt || now();
       return board(p.memberToken);
+    },
+
+    loadTrough: function (p) {
+      var me = requireMember(p.memberToken);
+      var filled = DB.chores.filter(function (c) {
+        return c.troughId && c.dueDate === today();
+      });
+      var last = null;
+      if (filled.length) {
+        var per = {};
+        filled.forEach(function (c) {
+          var w = find(DB.members, 'memberId', c.assigneeId);
+          var n = w ? w.name : 'Someone';
+          if (!per[n]) per[n] = { name: n, count: 0, points: 0, color: w ? w.color : '#888' };
+          per[n].count++; per[n].points += Number(c.points || 0);
+        });
+        last = { date: today(), total: filled.length,
+                 perPerson: Object.keys(per).map(function (k) { return per[k]; })
+                   .sort(function (a, b) { return b.points - a.points; }) };
+      }
+      return {
+        name: 'The Trough',
+        items: DB.trough.slice(),
+        lastFilled: last,
+        canEdit: me.role === 'owner',
+        canFill: me.role === 'owner' || m_role_approver(me)
+      };
+    },
+
+    addTroughItem: function (p) {
+      requireOwner(p.memberToken);
+      if (!String(p.title || '').trim()) throw new Error('Give the chore a name.');
+      DB.trough.push({ troughId: id('tr'), title: String(p.title).trim(),
+        category: p.category || '', points: Math.max(0, Number(p.points) || 0),
+        notes: '' });
+      return ACTIONS.loadTrough(p);
+    },
+
+    updateTroughItem: function (p) {
+      requireOwner(p.memberToken);
+      var t = find(DB.trough, 'troughId', p.troughId);
+      if (!t) throw new Error('That is not on your list.');
+      if (p.title !== undefined) t.title = String(p.title).trim() || t.title;
+      if (p.points !== undefined) t.points = Math.max(0, Number(p.points) || 0);
+      if (p.category !== undefined) t.category = p.category;
+      if (p.notes !== undefined) t.notes = p.notes;
+      return ACTIONS.loadTrough(p);
+    },
+
+    removeTroughItem: function (p) {
+      requireOwner(p.memberToken);
+      DB.trough = DB.trough.filter(function (t) { return t.troughId !== p.troughId; });
+      return ACTIONS.loadTrough(p);
+    },
+
+    fillTrough: function (p) {
+      var me = requireApprover(p.memberToken);
+      var already = DB.chores.filter(function (c) {
+        return c.troughId && c.dueDate === today();
+      });
+      if (already.length && !p.again) throw new Error('ALREADY_FILLED:' + already.length);
+      if (!DB.trough.length) {
+        throw new Error('There is nothing on the list yet. Add some chores first.');
+      }
+      var people = DB.members.filter(function (m) {
+        return m.householdId === me.householdId && m.active !== false;
+      });
+
+      // Yesterday's hand-out, so nobody repeats.
+      var recent = {};
+      DB.chores.forEach(function (c) {
+        if (c.troughId && c.assigneeId && c.dueDate && c.dueDate < today()) {
+          if (!recent[c.troughId]) recent[c.troughId] = {};
+          recent[c.troughId][c.assigneeId] = true;
+        }
+      });
+
+      planTrough(DB.trough, people, recent).forEach(function (row) {
+        DB.chores.push({
+          choreId: id('c'), householdId: me.householdId,
+          title: row.item.title, notes: row.item.notes || '',
+          category: row.item.category || '', points: row.item.points,
+          status: 'claimed', createdBy: me.memberId, createdAt: now(),
+          assigneeId: row.member.memberId, claimedAt: now(),
+          startedAt: '', submittedAt: '', approvedBy: '', approvedAt: '',
+          dueDate: today(), recurrence: '', reviewNote: '',
+          troughId: row.item.troughId
+        });
+      });
+      return board(p.memberToken);
+    },
+
+    loadStore: function (p) {
+      var me = requireMember(p.memberToken);
+      var boss = me.role === 'owner' || m_role_approver(me);
+      return {
+        name: 'The Prize Pen',
+        myPoints: Number(me.points || 0),
+        canManage: me.role === 'owner',
+        canFulfil: boss,
+        prizes: DB.prizes.map(function (x) {
+          var stock = x.stock === '' ? null : Number(x.stock);
+          return { prizeId: x.prizeId, name: x.name, notes: x.notes,
+            cost: Number(x.cost || 0), stock: stock,
+            soldOut: stock !== null && stock <= 0,
+            affordable: Number(me.points || 0) >= Number(x.cost || 0) };
+        }).sort(function (a, b) { return a.cost - b.cost; }),
+        claims: DB.redemptions.filter(function (r) {
+          return boss || r.memberId === me.memberId;
+        }).map(function (r) {
+          var w = find(DB.members, 'memberId', r.memberId);
+          return { redemptionId: r.redemptionId, name: r.name, cost: r.cost,
+            at: r.at, status: r.status, memberId: r.memberId,
+            memberName: w ? w.name : 'Someone', memberColor: w ? w.color : '#888' };
+        }).sort(function (a, b) { return String(b.at).localeCompare(String(a.at)); })
+      };
+    },
+
+    addPrize: function (p) {
+      requireOwner(p.memberToken);
+      if (!String(p.name || '').trim()) throw new Error('Give the prize a name.');
+      DB.prizes.push({ prizeId: id('pz'), name: String(p.name).trim(),
+        notes: p.notes || '', cost: Math.max(0, Number(p.cost) || 0),
+        stock: p.stock === '' || p.stock === undefined || p.stock === null
+          ? '' : Math.max(0, Number(p.stock) || 0) });
+      return ACTIONS.loadStore(p);
+    },
+
+    updatePrize: function (p) {
+      requireOwner(p.memberToken);
+      var x = find(DB.prizes, 'prizeId', p.prizeId);
+      if (!x) throw new Error('That prize is not in your store.');
+      if (p.name !== undefined) x.name = String(p.name).trim() || x.name;
+      if (p.cost !== undefined) x.cost = Math.max(0, Number(p.cost) || 0);
+      if (p.notes !== undefined) x.notes = p.notes;
+      if (p.stock !== undefined) {
+        x.stock = p.stock === '' || p.stock === null ? '' : Math.max(0, Number(p.stock) || 0);
+      }
+      return ACTIONS.loadStore(p);
+    },
+
+    removePrize: function (p) {
+      requireOwner(p.memberToken);
+      DB.prizes = DB.prizes.filter(function (x) { return x.prizeId !== p.prizeId; });
+      return ACTIONS.loadStore(p);
+    },
+
+    redeemPrize: function (p) {
+      var me = requireMember(p.memberToken);
+      var x = find(DB.prizes, 'prizeId', p.prizeId);
+      if (!x) throw new Error('That prize is not available.');
+      var cost = Number(x.cost || 0), have = Number(me.points || 0);
+      if (have < cost) {
+        throw new Error('That costs ' + cost + ' points and you have ' + have + '.');
+      }
+      var stock = x.stock === '' ? null : Number(x.stock);
+      if (stock !== null && stock <= 0) throw new Error('That one has run out.');
+
+      me.points = have - cost;
+      if (stock !== null) x.stock = stock - 1;
+      DB.redemptions.push({ redemptionId: id('r'), householdId: me.householdId,
+        prizeId: x.prizeId, memberId: me.memberId, name: x.name, cost: cost,
+        at: now(), status: 'claimed' });
+      return ACTIONS.loadStore(p);
+    },
+
+    fulfilRedemption: function (p) {
+      requireApprover(p.memberToken);
+      var r = find(DB.redemptions, 'redemptionId', p.redemptionId);
+      if (!r) throw new Error('That claim no longer exists.');
+      if (r.status !== 'claimed') throw new Error('That one is already dealt with.');
+      r.status = 'handed over';
+      return ACTIONS.loadStore(p);
+    },
+
+    cancelRedemption: function (p) {
+      requireApprover(p.memberToken);
+      var r = find(DB.redemptions, 'redemptionId', p.redemptionId);
+      if (!r) throw new Error('That claim no longer exists.');
+      if (r.status === 'cancelled') throw new Error('That one is already cancelled.');
+      var w = find(DB.members, 'memberId', r.memberId);
+      if (w) w.points = Number(w.points || 0) + Number(r.cost || 0);
+      var x = find(DB.prizes, 'prizeId', r.prizeId);
+      if (x && x.stock !== '') x.stock = Number(x.stock || 0) + 1;
+      r.status = 'cancelled';
+      return ACTIONS.loadStore(p);
+    },
+
+    adjustPoints: function (p) {
+      var me = requireOwner(p.memberToken);
+      var t = find(DB.members, 'memberId', p.targetId);
+      if (!t) throw new Error('That account is not in this household.');
+      var before = Number(t.points || 0), after;
+      if (p.set !== undefined && p.set !== null && p.set !== '') {
+        after = Math.round(Number(p.set));
+        if (isNaN(after)) throw new Error('Enter a number.');
+      } else {
+        var d = Math.round(Number(p.delta) || 0);
+        if (!d) throw new Error('Enter how many points to add or take away.');
+        after = before + d;
+      }
+      t.points = Math.max(0, Math.min(999999, after));
+      return { members: activeMembers(me.householdId) };
     },
 
     reopenChore: function (p) {

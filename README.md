@@ -166,6 +166,9 @@ used exactly as before, so both routes work.
 | `Auth.gs` | Households, devices, sub-accounts, PINs, sessions, lockouts. |
 | `Chores.gs` | Chores and the transitions between their states. |
 | `Sheets.gs` | The spreadsheet as a database. |
+| `Trough.gs` | The daily hand-out and the algorithm that shares it out. |
+| `Store.gs` | The Prize Pen, redemptions, and moving points by hand. |
+| `Suggestions.gs` | The 147 ready-made chores. Add your own here. |
 | `Setup.gs` | `setUp()`, and the housekeeping functions. |
 | `Index/Styles/Scripts/Images.html` | The app itself. |
 
@@ -206,6 +209,53 @@ purpose — same-origin would let the app's own `localStorage` quietly stand in
 for the bridge, which is the one thing the test needs to rule out. With them
 split, tokens appearing in `:8778`'s store and **not** `:8777`'s is proof the
 bridge carried them.
+
+---
+
+## The Trough
+
+A standing list of the chores that need doing every day. **Fill the trough**
+copies each one into a real chore and hands it to somebody. The account holder
+keeps the list; any parent can fill it.
+
+The hand-out is pseudo-random, shaped by three rules:
+
+1. **Nobody gets the same chore two days running.** Whoever had the bins
+   yesterday is not eligible for the bins today.
+2. **Children are favoured over parents** -- they are the ones spending the
+   points, so they earn most of them. `CONFIG.CHILD_WEIGHT` sets how hard it
+   leans; 2 means a child carries roughly twice a parent's share.
+3. **The points come out roughly even** within that weighting, so nobody ends
+   the day with three times what everybody else got.
+
+Each person gets a *target share* of the day's points and every chore goes to
+whoever is furthest below theirs, biggest chores first.
+
+> The obvious version of this -- track points-so-far over weight, give to the
+> lightest -- looks equivalent and is not. At the start everybody sits on zero,
+> so the first and biggest chore goes to a uniformly random person, parents
+> included. Measured over 400 runs that washed the bias out almost entirely:
+> children ended up with 18% more instead of the intended share. Targets are
+> known before anything is handed out, so the 20-pointer goes to a child on the
+> first pass. Same test after the change: children 17.5 each, parents 7.0.
+
+Filling twice in one day is refused unless you confirm, because it would
+double everybody's work.
+
+## The Prize Pen
+
+What the points are actually for. The account holder stocks it; anybody spends
+what they have earned.
+
+Points are taken the moment a prize is claimed, and the claim sits in a list
+until a parent marks it handed over -- the prize itself happens in the real
+world, and the app cannot know when the ice cream was bought. **Refund** puts
+the points back and returns a limited prize to the shelf.
+
+The account holder can also move points directly from **Manage accounts >
+Points** -- add, subtract, or set outright, with a reason kept in the activity
+log. Chores and the store move points on their own; this is for everything
+that happens off the board.
 
 ---
 

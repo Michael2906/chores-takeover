@@ -109,6 +109,9 @@
          Screen 3: the board
          ============================================================ -->
     <div id="app" class="screen app" hidden>
+      <!-- Shows whenever anything is in flight. See the note in Scripts. -->
+      <div id="progress" class="progress" hidden><span></span></div>
+
       <header id="header">
         <div class="brand">
           <div class="brand-mark" id="header-logo"></div>
@@ -127,6 +130,8 @@
           </button>
           <div class="menu" id="account-menu" hidden>
             <button class="menu-item" data-menu="switch">Switch person</button>
+            <button class="menu-item" data-menu="store">The Prize Pen</button>
+            <button class="menu-item" data-menu="trough">The Trough</button>
             <button class="menu-item" data-menu="accounts">
               Manage accounts
             </button>
@@ -200,7 +205,9 @@
         appName: <?!= JSON.stringify(config.appName) ?>,
         pinLength: <?!= Number(config.pinLength) ?>,
         minPassword: <?!= Number(config.minPassword) ?>,
-        wrapperOrigins: <?!= JSON.stringify(config.wrapperOrigins) ?>
+        wrapperOrigins: <?!= JSON.stringify(config.wrapperOrigins) ?>,
+        troughName: <?!= JSON.stringify(config.troughName) ?>,
+        storeName: <?!= JSON.stringify(config.storeName) ?>
       };
     </script>
     <?!= include('Scripts'); ?>

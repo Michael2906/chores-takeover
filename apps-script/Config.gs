@@ -27,6 +27,9 @@ var CONFIG = {
   SHEET_MEMBERS:    'Members',
   SHEET_SESSIONS:   'Sessions',
   SHEET_CHORES:     'Chores',
+  SHEET_TROUGH:     'Trough',
+  SHEET_PRIZES:     'Prizes',
+  SHEET_REDEEMED:   'Redemptions',
   SHEET_LOG:        'Activity Log',
 
   // ---------------------------------------------------------------------
@@ -91,51 +94,49 @@ var CONFIG = {
 
   // Offered in the "new chore" form. Free text is allowed too.
   CATEGORIES: [
-    'Kitchen', 'Bathroom', 'Bedroom', 'Laundry',
-    'Yard', 'Pets', 'Trash', 'Vehicle', 'Other'
+    'Kitchen', 'Cooking', 'Bathroom', 'Bedroom', 'Living Areas', 'Laundry',
+    'Trash', 'Pets', 'Yard', 'Vehicle', 'Errands', 'School', 'Helping', 'Other'
   ],
 
   // Point values offered as quick-pick buttons. Any other number can still be
   // typed in -- these are shortcuts, not the whole range.
   POINT_PRESETS: [1, 2, 3, 5, 10, 20],
 
-  // Ready-made chores. Picking one fills in the rest of the form, which stays
-  // fully editable -- the suggestion is a starting point, not a template you
-  // are stuck with. Typing a name that is not on this list just fills the form
-  // in by hand as before.
-  //
-  // Add your own freely: title is the only required field.
-  SUGGESTIONS: [
-    { title: 'Load the dishwasher',   category: 'Kitchen',  points: 3,  recurrence: 'daily',   notes: 'Rinse the plates first.' },
-    { title: 'Empty the dishwasher',  category: 'Kitchen',  points: 3,  recurrence: 'daily',   notes: '' },
-    { title: 'Wipe the worktops',     category: 'Kitchen',  points: 2,  recurrence: 'daily',   notes: 'Do not forget the corners.' },
-    { title: 'Sweep the kitchen',     category: 'Kitchen',  points: 3,  recurrence: 'weekly',  notes: '' },
-    { title: 'Take the bins out',     category: 'Trash',    points: 2,  recurrence: 'weekly',  notes: 'Check which bin it is this week.' },
-    { title: 'Clean the bathroom',    category: 'Bathroom', points: 10, recurrence: 'weekly',  notes: 'Sink, toilet, bath, mirror.' },
-    { title: 'Scrub the bathtub',     category: 'Bathroom', points: 8,  recurrence: 'monthly', notes: '' },
-    { title: 'Make your bed',         category: 'Bedroom',  points: 1,  recurrence: 'daily',   notes: '' },
-    { title: 'Tidy your room',        category: 'Bedroom',  points: 5,  recurrence: 'weekly',  notes: 'Floor clear, under the bed as well.' },
-    { title: 'Hoover the front room', category: 'Bedroom',  points: 5,  recurrence: 'weekly',  notes: '' },
-    { title: 'Dust the front room',   category: 'Bedroom',  points: 3,  recurrence: 'weekly',  notes: '' },
-    { title: 'Fold the laundry',      category: 'Laundry',  points: 4,  recurrence: 'weekly',  notes: '' },
-    { title: 'Put your laundry away', category: 'Laundry',  points: 2,  recurrence: 'weekly',  notes: '' },
-    { title: 'Start a load of washing', category: 'Laundry', points: 2, recurrence: '',        notes: '' },
-    { title: 'Mow the lawn',          category: 'Yard',     points: 20, recurrence: 'weekly',  notes: '' },
-    { title: 'Rake the leaves',       category: 'Yard',     points: 10, recurrence: '',        notes: '' },
-    { title: 'Sweep the porch',       category: 'Yard',     points: 5,  recurrence: 'weekly',  notes: '' },
-    { title: 'Water the plants',      category: 'Yard',     points: 2,  recurrence: 'weekly',  notes: '' },
-    { title: 'Feed the pets',         category: 'Pets',     points: 2,  recurrence: 'daily',   notes: '' },
-    { title: 'Walk the dog',          category: 'Pets',     points: 3,  recurrence: 'daily',   notes: '' },
-    { title: 'Clean up after the pets', category: 'Pets',   points: 5,  recurrence: 'weekly',  notes: '' },
-    { title: 'Wash the car',          category: 'Vehicle',  points: 20, recurrence: 'monthly', notes: '' },
-    { title: 'Vacuum the car',        category: 'Vehicle',  points: 10, recurrence: 'monthly', notes: '' },
-    { title: 'Bring the mail in',     category: 'Other',    points: 1,  recurrence: 'daily',   notes: '' },
-    { title: 'Set the table',         category: 'Kitchen',  points: 2,  recurrence: 'daily',   notes: '' },
-    { title: 'Clear the table',       category: 'Kitchen',  points: 2,  recurrence: 'daily',   notes: '' }
-  ],
+  // Ready-made chores live in Suggestions.gs -- there are enough of them to
+  // swamp this file. Add your own there.
 
-  // A chore nobody has claimed this many days past its due date is flagged.
-  STALE_DAYS: 3,
+  // ---------------------------------------------------------------------
+  // The Trough -- the daily hand-out
+  // ---------------------------------------------------------------------
+
+  // What the daily list is called on screen. It is the boar's feeding trough:
+  // the same chores come round every day and get shared out.
+  TROUGH_NAME: 'The Trough',
+
+  // How much harder the hand-out leans on children than on parents.
+  //
+  // Each person's "load" is their points so far divided by this weight, and
+  // the next chore goes to whoever is carrying the least. At 2, a child takes
+  // roughly twice the points of a parent before the parent is picked -- which
+  // is the point, since the children are the ones spending them. Set it to 1
+  // to share evenly, or higher to lean harder on the kids.
+  CHILD_WEIGHT: 2,
+
+  // Nobody gets the same trough chore two days running. Raise this to widen
+  // the gap -- 2 means "not yesterday or the day before".
+  NO_REPEAT_DAYS: 1,
+
+  // ---------------------------------------------------------------------
+  // The Store
+  // ---------------------------------------------------------------------
+
+  STORE_NAME: 'The Prize Pen',
+
+  // Whether a redemption waits for a parent to hand the prize over. With this
+  // on, points are taken at once and the claim sits in a list until somebody
+  // marks it handed over -- which is usually what you want, since the prize
+  // itself happens in the real world.
+  STORE_NEEDS_FULFILLING: true,
 
   // ---------------------------------------------------------------------
   // Email

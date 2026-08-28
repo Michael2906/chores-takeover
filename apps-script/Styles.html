@@ -841,6 +841,176 @@ h1, h2, h3 { line-height: 1.25; }
 .roster-row .sub { font-size: 0.75rem; color: var(--muted); font-weight: normal; }
 
 /* -------------------------------------------------------------------
+   Busy states
+
+   Everything here answers the same question: "did my tap do anything?"
+   Without an answer people tap again, and a second tap on Claim or Approve
+   is a real request the server has to refuse.
+   ------------------------------------------------------------------- */
+
+/* A sliver across the top of the board whenever any call is in flight. */
+.progress {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+  z-index: 30;
+}
+
+.progress span {
+  display: block;
+  height: 100%;
+  width: 40%;
+  background: var(--primary);
+  /* Indeterminate: we cannot know how long Apps Script will take, so it
+     sweeps rather than pretending to measure. */
+  animation: sweep 1.1s ease-in-out infinite;
+}
+
+@keyframes sweep {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
+}
+
+/* A button waiting on its own request. The spinner replaces the label
+   rather than sitting beside it, so the button does not change width and
+   shove the rest of the row about. */
+.btn.is-busy {
+  position: relative;
+  color: transparent !important;
+  pointer-events: none;
+}
+
+.btn.is-busy::after {
+  content: "";
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 1em; height: 1em;
+  margin: -0.5em 0 0 -0.5em;
+  border: 2px solid rgba(255, 255, 255, 0.45);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+/* Quiet and secondary buttons are light, so a white spinner would vanish. */
+.btn-secondary.is-busy::after,
+.btn-quiet.is-busy::after {
+  border-color: rgba(0, 0, 0, 0.2);
+  border-top-color: var(--primary);
+}
+
+/* A whole card mid-action: dimmed, and nothing on it can be clicked twice. */
+.chore.is-busy { opacity: 0.55; pointer-events: none; }
+
+/* Covers the board while a big rebuild lands (filling the trough). */
+.working {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-sm);
+  background: rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(1px);
+  z-index: 28;
+  color: var(--dark-font);
+  font-weight: bold;
+}
+
+/* -------------------------------------------------------------------
+   The Trough and The Prize Pen
+   ------------------------------------------------------------------- */
+.list-rows { display: flex; flex-direction: column; gap: var(--spacing-sm); }
+
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  background: var(--card-sunk);
+  border-radius: var(--border-md);
+  flex-wrap: wrap;
+}
+
+.list-row .grow { flex: 1; min-width: 7rem; }
+.list-row .t { font-weight: bold; }
+.list-row .sub { font-size: 0.78rem; color: var(--muted); }
+
+.cost {
+  background: var(--tertiary);
+  color: #3a3011;
+  border-radius: var(--border-lg);
+  padding: 0 var(--spacing-sm);
+  font-weight: bold;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.prize { align-items: flex-start; }
+.prize.cant { opacity: 0.6; }
+
+.sold-out {
+  background: var(--card-sunk);
+  color: var(--muted);
+  border-radius: var(--border-lg);
+  padding: 0 var(--spacing-sm);
+  font-size: 0.78rem;
+}
+
+.claim-status {
+  border-radius: var(--border-lg);
+  padding: 0 var(--spacing-sm);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.claim-status.claimed { background: #fdf3e0; color: #8a5a12; }
+.claim-status.handed  { background: #e8f2ea; color: var(--success); }
+.claim-status.cancelled { background: var(--card-sunk); color: var(--muted); }
+
+/* The "who got what" summary after a fill. */
+.fill-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+  margin-top: var(--spacing-sm);
+}
+
+.fill-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  background: var(--card-sunk);
+  border-radius: var(--border-lg);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  font-size: 0.8rem;
+}
+
+.fill-chip .dot {
+  width: 0.7rem; height: 0.7rem; border-radius: 50%; flex: none;
+}
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  margin: var(--spacing-md) 0 var(--spacing-sm);
+  flex-wrap: wrap;
+}
+
+.section-head h3 { font-size: 1rem; }
+
+.hr {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: var(--spacing-md) 0;
+}
+
+/* -------------------------------------------------------------------
    Toast
    ------------------------------------------------------------------- */
 .toast {

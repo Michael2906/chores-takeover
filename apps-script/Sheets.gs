@@ -49,7 +49,21 @@ function schema(name) {
       'choreId', 'householdId', 'title', 'notes', 'category', 'points',
       'status', 'createdBy', 'createdAt', 'assigneeId', 'claimedAt',
       'startedAt', 'submittedAt', 'approvedBy', 'approvedAt', 'dueDate',
-      'recurrence', 'reviewNote'
+      'recurrence', 'reviewNote', 'troughId'
+    ];
+    // The daily list itself -- templates, not chores. Filling the trough
+    // copies these into real Chores rows.
+    _schema[CONFIG.SHEET_TROUGH] = [
+      'troughId', 'householdId', 'title', 'notes', 'category', 'points',
+      'active', 'createdAt'
+    ];
+    _schema[CONFIG.SHEET_PRIZES] = [
+      'prizeId', 'householdId', 'name', 'notes', 'cost', 'stock',
+      'active', 'createdAt'
+    ];
+    _schema[CONFIG.SHEET_REDEEMED] = [
+      'redemptionId', 'householdId', 'prizeId', 'memberId', 'name', 'cost',
+      'at', 'status', 'handledBy', 'handledAt'
     ];
     _schema[CONFIG.SHEET_LOG] = [
       'at', 'householdId', 'choreId', 'memberId', 'action', 'detail'

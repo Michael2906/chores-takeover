@@ -25,7 +25,9 @@ function doGet(e) {
     tagline:  CONFIG.TAGLINE,
     pinLength: CONFIG.PIN_LENGTH,
     minPassword: CONFIG.MIN_PASSWORD,
-    wrapperOrigins: CONFIG.WRAPPER_ORIGINS || []
+    wrapperOrigins: CONFIG.WRAPPER_ORIGINS || [],
+    troughName: CONFIG.TROUGH_NAME,
+    storeName: CONFIG.STORE_NAME
   };
   return template.evaluate()
     .setTitle(CONFIG.APP_NAME)
@@ -86,7 +88,24 @@ function actions() {
     approveChore:   approveChore,
     sendBackChore:  sendBackChore,
     assignChore:    assignChore,
-    reopenChore:    reopenChore
+    reopenChore:    reopenChore,
+
+    // The Trough -- the daily hand-out
+    loadTrough:       loadTrough,
+    addTroughItem:    addTroughItem,
+    updateTroughItem: updateTroughItem,
+    removeTroughItem: removeTroughItem,
+    fillTrough:       fillTrough,
+
+    // The Prize Pen
+    loadStore:         loadStore,
+    addPrize:          addPrize,
+    updatePrize:       updatePrize,
+    removePrize:       removePrize,
+    redeemPrize:       redeemPrize,
+    fulfilRedemption:  fulfilRedemption,
+    cancelRedemption:  cancelRedemption,
+    adjustPoints:      adjustPoints
   };
 }
 

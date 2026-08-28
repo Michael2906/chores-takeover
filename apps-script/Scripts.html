@@ -159,14 +159,34 @@
    * One call, one shape. Tokens ride along on every request so the server
    * decides what the caller may do -- the client never decides for itself.
    */
+  /**
+   * How many calls are in the air.
+   *
+   * Apps Script round-trips are slow enough -- often a second or two -- that
+   * without a visible sign of life people tap Claim again, and again. A
+   * counter rather than a boolean because two calls can overlap, and the bar
+   * must not vanish when the first of them lands.
+   */
+  var inFlight = 0;
+
+  function setBusy(delta) {
+    inFlight = Math.max(0, inFlight + delta);
+    var bar = $('progress');
+    if (bar) bar.hidden = inFlight === 0;
+  }
+
   function api(action, payload) {
     var body = payload || {};
     body.householdToken = TOKENS.household;
     body.memberToken = TOKENS.member;
 
+    setBusy(1);
+    var done = function () { setBusy(-1); };
+
     return new Promise(function (resolve, reject) {
       google.script.run
         .withSuccessHandler(function (res) {
+          done();
           if (res && res.ok) { resolve(res.data); return; }
           var msg = (res && res.error) || 'Something went wrong.';
           if (msg === 'SIGNED_OUT') {
@@ -179,6 +199,7 @@
           reject(new Error(msg));
         })
         .withFailureHandler(function (err) {
+          done();
           reject(new Error(
             (err && err.message) ||
             'Could not reach the server. Check your connection.'));
@@ -237,16 +258,36 @@
     toast((err && err.message) || String(err), 'bad');
   }
 
-  /** Disables a button while its request is in flight. */
+  /**
+   * Puts a button into its waiting state.
+   *
+   * The label is kept and hidden rather than replaced, so the button holds
+   * its width and the row does not jump about while it spins.
+   */
   function busy(btn, on) {
     if (!btn) return;
     btn.disabled = !!on;
-    if (on) {
-      btn.dataset.label = btn.textContent;
-      btn.textContent = '…';
-    } else if (btn.dataset.label) {
-      btn.textContent = btn.dataset.label;
-    }
+    btn.classList.toggle('is-busy', !!on);
+  }
+
+  /** Dims a whole chore card while one of its buttons is working. */
+  function busyCard(el, on) {
+    if (el) el.classList.toggle('is-busy', !!on);
+  }
+
+  /**
+   * A blocking overlay for the jobs that rebuild the whole board.
+   *
+   * Filling the trough writes a row per chore, which on a long list is slow
+   * enough that the board looks frozen. Better to say what is happening.
+   */
+  function working(message) {
+    var host = $('app');
+    var el = document.createElement('div');
+    el.className = 'working';
+    el.innerHTML = '<div class="spinner"></div><div>' + esc(message) + '</div>';
+    host.appendChild(el);
+    return function () { if (el.parentNode) el.parentNode.removeChild(el); };
   }
 
   // -----------------------------------------------------------------
@@ -554,6 +595,13 @@
     // Only parents post chores, so the add button is theirs alone. The server
     // refuses either way; this stops a child being shown a button that fails.
     $('new-chore').hidden = !me.canApprove;
+
+    // The Trough is read-only for a child -- a list they cannot add to or
+    // hand out -- so it is not worth a menu entry. The Prize Pen stays: that
+    // one is mostly for them.
+    document.querySelectorAll('[data-menu=trough]').forEach(function (b) {
+      b.hidden = !me.canApprove;
+    });
 
     renderCounts();
     renderContent();
@@ -902,7 +950,12 @@
     }[act];
     if (!map) return;
 
+    // The card as a whole goes quiet, not just the button that was pressed --
+    // otherwise Claim spins while Edit next to it is still live.
+    var card = button.closest('[data-chore]');
     busy(button, true);
+    busyCard(card, true);
+
     api(map[0], { choreId: choreId })
       .then(function (data) { applyBoard(data); toast(map[1], 'good'); })
       .catch(function (err) {
@@ -911,7 +964,7 @@
         // the card in front of them is stale. Repaint from the server.
         refresh().catch(function () {});
       })
-      .then(function () { busy(button, false); });
+      .then(function () { busy(button, false); busyCard(card, false); });
   }
 
   /** Runs an action, repaints from its reply, and says so. */
@@ -950,7 +1003,212 @@
       accountsForm();
     } else if (which === 'password') {
       passwordForm();
+    } else if (which === 'trough') {
+      troughForm();
+    } else if (which === 'store') {
+      storeForm();
     }
+  }
+
+  // -----------------------------------------------------------------
+  // The Trough -- the daily hand-out
+  // -----------------------------------------------------------------
+
+  function troughForm() {
+    api('loadTrough', {}).then(renderTrough).catch(fail);
+  }
+
+  function renderTrough(t) {
+    var rows = t.items.length
+      ? t.items.map(function (i) {
+          return '<div class="list-row">' +
+            '<span class="grow"><span class="t">' + esc(i.title) + '</span>' +
+              (i.category || i.notes
+                ? '<br><span class="sub">' +
+                  esc([i.category, i.notes].filter(Boolean).join(' - ')) +
+                  '</span>'
+                : '') +
+            '</span>' +
+            '<span class="cost">' + i.points + 'p</span>' +
+            (t.canEdit
+              ? '<button class="btn btn-sm btn-secondary" data-tedit="' +
+                  esc(i.troughId) + '">Edit</button>' +
+                '<button class="btn btn-sm btn-quiet" data-tdel="' +
+                  esc(i.troughId) + '">Remove</button>'
+              : '') +
+          '</div>';
+        }).join('')
+      : '<p class="form-hint">Nothing on the list yet.</p>';
+
+    var last = t.lastFilled
+      ? '<p class="form-hint" style="text-align:left">Filled today - ' +
+          t.lastFilled.total + ' chores handed out.</p>' +
+        '<div class="fill-summary">' +
+          t.lastFilled.perPerson.map(function (p) {
+            return '<span class="fill-chip">' +
+              '<span class="dot" style="background:' + esc(p.color) + '"></span>' +
+              esc(p.name) + ' &middot; ' + p.count + ' &middot; ' + p.points + 'p</span>';
+          }).join('') +
+        '</div>'
+      : '<p class="form-hint" style="text-align:left">Not filled today yet.</p>';
+
+    openModal(esc(t.name),
+      '<p class="form-hint" style="text-align:left">' +
+        'The chores that need doing every day. Filling the trough shares them ' +
+        'out: nobody gets the same one two days running, the children get the ' +
+        'bigger share, and the points come out roughly even.' +
+      '</p>' +
+      last +
+      '<hr class="hr">' +
+      '<div class="list-rows" id="trough-rows">' + rows + '</div>' +
+      (t.canEdit
+        ? '<hr class="hr">' +
+          '<form class="form" id="trough-add">' +
+            '<label class="field"><span>Add to the list</span>' +
+              '<input name="title" list="sugg-list-t" maxlength="120" ' +
+                     'autocomplete="off" placeholder="Pick one, or type your own" />' +
+              '<datalist id="sugg-list-t">' +
+                state.suggestions.map(function (x) {
+                  return '<option value="' + esc(x.title) + '"></option>';
+                }).join('') +
+              '</datalist></label>' +
+            '<div class="chips">' +
+              '<input type="number" name="points" min="0" max="999" ' +
+                     'placeholder="Points" style="max-width:7rem" />' +
+              '<input name="category" list="cat-list-t" maxlength="40" ' +
+                     'placeholder="Category" style="max-width:10rem" />' +
+              '<datalist id="cat-list-t">' +
+                state.categories.map(function (c) {
+                  return '<option value="' + esc(c) + '"></option>';
+                }).join('') +
+              '</datalist>' +
+            '</div>' +
+          '</form>'
+        : ''),
+      [{ label: 'Close', kind: 'btn-secondary', act: closeModal }]
+        .concat(t.canEdit ? [
+          { label: 'Add', kind: 'btn-secondary', act: function (btn) {
+              var f = $('trough-add');
+              if (!f.title.value.trim()) { toast('Enter a chore.', 'bad'); return; }
+              busy(btn, true);
+              api('addTroughItem', {
+                title: f.title.value,
+                points: f.points.value,
+                category: f.category.value
+              }).then(function (data) {
+                renderTrough(data);
+                toast('Added to the list.', 'good');
+              }).catch(fail).then(function () { busy(btn, false); });
+            } }
+        ] : [])
+        .concat(t.canFill ? [
+          { label: 'Fill the trough', kind: 'btn-primary', act: function (btn) {
+              doFill(btn, false);
+            } }
+        ] : []));
+
+    // Picking a ready-made chore fills the points and category in.
+    var addForm = $('trough-add');
+    if (addForm) {
+      addForm.title.addEventListener('input', function () {
+        var typed = addForm.title.value.trim().toLowerCase();
+        for (var i = 0; i < state.suggestions.length; i++) {
+          var x = state.suggestions[i];
+          if (String(x.title).toLowerCase() === typed) {
+            addForm.points.value = x.points;
+            addForm.category.value = x.category || '';
+            return;
+          }
+        }
+      });
+    }
+
+    var host = $('trough-rows');
+    if (host) {
+      host.addEventListener('click', function (e) {
+        var del = e.target.closest('[data-tdel]');
+        var ed = e.target.closest('[data-tedit]');
+
+        if (del) {
+          busy(del, true);
+          api('removeTroughItem', { troughId: del.dataset.tdel })
+            .then(renderTrough).catch(fail);
+          return;
+        }
+        if (ed) {
+          var item = t.items.filter(function (i) {
+            return i.troughId === ed.dataset.tedit;
+          })[0];
+          if (item) troughItemForm(item);
+        }
+      });
+    }
+  }
+
+  /**
+   * Runs the hand-out.
+   *
+   * Filling twice in a day would double everybody's work, so the server
+   * refuses a second run and says so. `again` is what the confirmation sends
+   * back when that is genuinely what was wanted.
+   */
+  function doFill(btn, again) {
+    busy(btn, true);
+    var stop = working('Sharing the chores out...');
+
+    api('fillTrough', { again: !!again })
+      .then(function (data) {
+        applyBoard(data);
+        closeModal();
+        toast('Chores handed out.', 'good');
+      })
+      .catch(function (err) {
+        var m = String(err.message || '');
+        if (m.indexOf('ALREADY_FILLED:') === 0) {
+          var n = m.split(':')[1];
+          confirmModal('Already filled today',
+            'The trough has already been filled today - ' + n +
+            ' chores are out. Filling it again adds another full set on top.',
+            'Fill it again', function (b) { doFill(b, true); });
+          return;
+        }
+        fail(err);
+      })
+      .then(function () { stop(); busy(btn, false); });
+  }
+
+  function troughItemForm(item) {
+    openModal('Edit ' + esc(item.title),
+      '<form class="form" id="titem-form">' +
+        '<label class="field"><span>Chore</span>' +
+          '<input name="title" value="' + esc(item.title) + '" maxlength="120" /></label>' +
+        '<label class="field"><span>Points</span>' +
+          '<input type="number" name="points" min="0" max="999" value="' +
+            (item.points || 0) + '" /></label>' +
+        '<label class="field"><span>Category</span>' +
+          '<input name="category" value="' + esc(item.category || '') +
+          '" maxlength="40" /></label>' +
+        '<label class="field"><span>Details</span>' +
+          '<textarea name="notes" maxlength="1000">' + esc(item.notes || '') +
+          '</textarea></label>' +
+      '</form>',
+      [
+        { label: 'Back', kind: 'btn-secondary', act: troughForm },
+        { label: 'Save', kind: 'btn-primary', act: function (btn) {
+            var f = $('titem-form');
+            busy(btn, true);
+            api('updateTroughItem', {
+              troughId: item.troughId,
+              title: f.title.value,
+              points: f.points.value,
+              category: f.category.value,
+              notes: f.notes.value
+            }).then(function (data) {
+              renderTrough(data);
+              toast('Saved.', 'good');
+            }).catch(fail).then(function () { busy(btn, false); });
+          } }
+      ]);
   }
 
   // -----------------------------------------------------------------
@@ -1277,6 +1535,8 @@
                 ? ' · really ' + esc(m.realName) : '') +
             '</span>' +
           '</span>' +
+          '<button class="btn btn-sm btn-secondary" data-points="' +
+            esc(m.memberId) + '">Points</button>' +
           '<button class="btn btn-sm btn-secondary" data-edit="' +
             esc(m.memberId) + '">Edit</button>' +
         '</div>';
@@ -1320,12 +1580,17 @@
       ]);
 
     $('roster').addEventListener('click', function (e) {
-      var b = e.target.closest('[data-edit]');
-      if (!b) return;
+      var ed = e.target.closest('[data-edit]');
+      var pt = e.target.closest('[data-points]');
+      var id = (ed && ed.dataset.edit) || (pt && pt.dataset.points);
+      if (!id) return;
+
       var m = state.members.filter(function (x) {
-        return x.memberId === b.dataset.edit;
+        return x.memberId === id;
       })[0];
-      if (m) memberForm(m);
+      if (!m) return;
+
+      if (pt) pointsForm(m); else memberForm(m);
     });
   }
 
@@ -1428,6 +1693,259 @@
             }).catch(fail).then(function () { busy(btn, false); });
           } }
       ]));
+  }
+
+  // -----------------------------------------------------------------
+  // The Prize Pen -- what the points are for
+  // -----------------------------------------------------------------
+
+  function storeForm() {
+    api('loadStore', {}).then(renderStore).catch(fail);
+  }
+
+  function renderStore(st) {
+    var shelf = st.prizes.length
+      ? st.prizes.map(function (p) {
+          var blocked = p.soldOut || !p.affordable;
+          return '<div class="list-row prize' + (blocked ? ' cant' : '') + '">' +
+            '<span class="grow"><span class="t">' + esc(p.name) + '</span>' +
+              (p.notes ? '<br><span class="sub">' + esc(p.notes) + '</span>' : '') +
+              (p.stock !== null
+                ? '<br><span class="sub">' + p.stock + ' left</span>' : '') +
+            '</span>' +
+            '<span class="cost">' + p.cost + 'p</span>' +
+            (p.soldOut
+              ? '<span class="sold-out">Gone</span>'
+              : '<button class="btn btn-sm ' +
+                  (p.affordable ? 'btn-go' : 'btn-secondary') +
+                  '" data-buy="' + esc(p.prizeId) + '"' +
+                  (p.affordable ? '' : ' disabled') + '>' +
+                  (p.affordable ? 'Get it' : 'Not enough') + '</button>') +
+            (st.canManage
+              ? '<button class="btn btn-sm btn-secondary" data-pedit="' +
+                  esc(p.prizeId) + '">Edit</button>' +
+                '<button class="btn btn-sm btn-quiet" data-pdel="' +
+                  esc(p.prizeId) + '">Remove</button>'
+              : '') +
+          '</div>';
+        }).join('')
+      : '<p class="form-hint">Nothing in the pen yet.</p>';
+
+    var claims = st.claims.length
+      ? st.claims.map(function (r) {
+          var cls = r.status === 'handed over' ? 'handed'
+                  : r.status === 'cancelled' ? 'cancelled' : 'claimed';
+          return '<div class="list-row">' +
+            '<span class="grow"><span class="t">' + esc(r.name) + '</span>' +
+              '<br><span class="sub">' + esc(r.memberName) + ' &middot; ' +
+              r.cost + 'p</span></span>' +
+            '<span class="claim-status ' + cls + '">' + esc(r.status) + '</span>' +
+            (st.canFulfil && r.status === 'claimed'
+              ? '<button class="btn btn-sm btn-go" data-fulfil="' +
+                  esc(r.redemptionId) + '">Handed over</button>' +
+                '<button class="btn btn-sm btn-quiet" data-cancel="' +
+                  esc(r.redemptionId) + '">Refund</button>'
+              : '') +
+          '</div>';
+        }).join('')
+      : '<p class="form-hint">Nothing claimed yet.</p>';
+
+    openModal(esc(st.name) +
+        ' <span class="cost">' + st.myPoints + 'p</span>',
+      '<div class="list-rows" id="shelf">' + shelf + '</div>' +
+      (st.canManage
+        ? '<hr class="hr">' +
+          '<form class="form" id="prize-add">' +
+            '<label class="field"><span>Add a prize</span>' +
+              '<input name="name" maxlength="80" placeholder="Ice cream" /></label>' +
+            '<div class="chips">' +
+              '<input type="number" name="cost" min="0" placeholder="Cost" ' +
+                     'style="max-width:7rem" />' +
+              '<input type="number" name="stock" min="0" ' +
+                     'placeholder="How many (blank = unlimited)" ' +
+                     'style="max-width:14rem" />' +
+            '</div>' +
+          '</form>'
+        : '') +
+      '<div class="section-head"><h3>Claims</h3></div>' +
+      '<div class="list-rows" id="claims">' + claims + '</div>',
+      [{ label: 'Close', kind: 'btn-secondary', act: closeModal }]
+        .concat(st.canManage ? [
+          { label: 'Add prize', kind: 'btn-primary', act: function (btn) {
+              var f = $('prize-add');
+              if (!f.name.value.trim()) { toast('Name the prize.', 'bad'); return; }
+              busy(btn, true);
+              api('addPrize', {
+                name: f.name.value,
+                cost: f.cost.value,
+                stock: f.stock.value
+              }).then(function (data) {
+                renderStore(data);
+                toast('Added.', 'good');
+              }).catch(fail).then(function () { busy(btn, false); });
+            } }
+        ] : []));
+
+    $('shelf').addEventListener('click', function (e) {
+      var buy = e.target.closest('[data-buy]');
+      var ed = e.target.closest('[data-pedit]');
+      var del = e.target.closest('[data-pdel]');
+
+      if (buy) {
+        var p = st.prizes.filter(function (x) {
+          return x.prizeId === buy.dataset.buy;
+        })[0];
+        confirmModal('Spend ' + p.cost + ' points?',
+          'You will have ' + (st.myPoints - p.cost) + ' left. A parent hands ' +
+          'the prize over.',
+          'Get it', function (b) {
+            busy(b, true);
+            api('redeemPrize', { prizeId: p.prizeId })
+              .then(function (data) {
+                renderStore(data);
+                // The chip in the header carries the balance, so it has to
+                // catch up too.
+                return refresh();
+              })
+              .then(function () { toast('Claimed. Go and find a parent.', 'good'); })
+              .catch(function (err) { fail(err); storeForm(); });
+          });
+        return;
+      }
+      if (del) {
+        busy(del, true);
+        api('removePrize', { prizeId: del.dataset.pdel })
+          .then(renderStore).catch(fail);
+        return;
+      }
+      if (ed) {
+        var pr = st.prizes.filter(function (x) {
+          return x.prizeId === ed.dataset.pedit;
+        })[0];
+        if (pr) prizeForm(pr);
+      }
+    });
+
+    $('claims').addEventListener('click', function (e) {
+      var ok = e.target.closest('[data-fulfil]');
+      var no = e.target.closest('[data-cancel]');
+
+      if (ok) {
+        busy(ok, true);
+        api('fulfilRedemption', { redemptionId: ok.dataset.fulfil })
+          .then(function (data) { renderStore(data); toast('Marked.', 'good'); })
+          .catch(fail);
+      } else if (no) {
+        busy(no, true);
+        api('cancelRedemption', { redemptionId: no.dataset.cancel })
+          .then(function (data) {
+            renderStore(data);
+            return refresh();
+          })
+          .then(function () { toast('Refunded.', 'good'); })
+          .catch(fail);
+      }
+    });
+  }
+
+  function prizeForm(p) {
+    openModal('Edit ' + esc(p.name),
+      '<form class="form" id="prize-form">' +
+        '<label class="field"><span>Prize</span>' +
+          '<input name="name" value="' + esc(p.name) + '" maxlength="80" /></label>' +
+        '<label class="field"><span>Cost in points</span>' +
+          '<input type="number" name="cost" min="0" value="' + p.cost + '" /></label>' +
+        '<label class="field"><span>How many</span>' +
+          '<input type="number" name="stock" min="0" value="' +
+            (p.stock === null ? '' : p.stock) + '" ' +
+            'placeholder="Blank = unlimited" /></label>' +
+        '<label class="field"><span>Details</span>' +
+          '<textarea name="notes" maxlength="500">' + esc(p.notes || '') +
+          '</textarea></label>' +
+      '</form>',
+      [
+        { label: 'Back', kind: 'btn-secondary', act: storeForm },
+        { label: 'Save', kind: 'btn-primary', act: function (btn) {
+            var f = $('prize-form');
+            busy(btn, true);
+            api('updatePrize', {
+              prizeId: p.prizeId,
+              name: f.name.value,
+              cost: f.cost.value,
+              stock: f.stock.value,
+              notes: f.notes.value
+            }).then(function (data) {
+              renderStore(data);
+              toast('Saved.', 'good');
+            }).catch(fail).then(function () { busy(btn, false); });
+          } }
+      ]);
+  }
+
+  // -----------------------------------------------------------------
+  // Moving points by hand
+  // -----------------------------------------------------------------
+
+  /**
+   * The account holder's override.
+   *
+   * Add, take away, or set outright. Chores and the store move points on
+   * their own; this is for everything that happens off the board -- a bribe,
+   * a forfeit, a correction after somebody miscounted.
+   */
+  function pointsForm(m) {
+    openModal('Points for ' + esc(m.name),
+      '<p class="form-hint" style="text-align:left">' +
+        esc(m.name) + ' has <strong>' + (m.points || 0) + '</strong> points.' +
+      '</p>' +
+      '<form class="form" id="points-form">' +
+        '<div class="field"><span>Add or take away</span>' +
+          '<div class="chips" id="points-quick">' +
+            [5, 10, 25, -5, -10, -25].map(function (n) {
+              return '<button type="button" class="chip-pick" data-delta="' +
+                n + '">' + (n > 0 ? '+' : '') + n + '</button>';
+            }).join('') +
+          '</div>' +
+          '<input type="number" name="delta" placeholder="or type an amount" />' +
+        '</div>' +
+        '<label class="field"><span>Or set it to exactly</span>' +
+          '<input type="number" name="set" min="0" placeholder="Leave blank to adjust" />' +
+        '</label>' +
+        '<label class="field"><span>Why <small>(optional)</small></span>' +
+          '<input name="reason" maxlength="200" placeholder="Helped with the shopping" />' +
+          '<small>Kept in the activity log, so the change can be explained later.</small>' +
+        '</label>' +
+      '</form>',
+      [
+        { label: 'Back', kind: 'btn-secondary', act: accountsForm },
+        { label: 'Apply', kind: 'btn-primary', act: function (btn) {
+            var f = $('points-form');
+            var payload = { targetId: m.memberId, reason: f.reason.value };
+
+            if (String(f.set.value).trim() !== '') payload.set = f.set.value;
+            else payload.delta = f.delta.value;
+
+            busy(btn, true);
+            api('adjustPoints', payload).then(function (data) {
+              state.members = data.members;
+              return refresh();
+            }).then(function () {
+              accountsForm();
+              toast('Points updated.', 'good');
+            }).catch(fail).then(function () { busy(btn, false); });
+          } }
+      ]);
+
+    $('points-quick').addEventListener('click', function (e) {
+      var b = e.target.closest('[data-delta]');
+      if (!b) return;
+      var f = $('points-form');
+      f.delta.value = b.dataset.delta;
+      f.set.value = '';
+      $('points-quick').querySelectorAll('.chip-pick').forEach(function (x) {
+        x.classList.toggle('on', x === b);
+      });
+    });
   }
 
   // --- Change the household password ---------------------------------
