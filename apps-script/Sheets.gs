@@ -13,28 +13,44 @@
 // Schema -- the header row of each sheet, in order
 // ---------------------------------------------------------------------
 
-var SCHEMA = {};
-SCHEMA[CONFIG.SHEET_HOUSEHOLDS] = [
-  'householdId', 'name', 'ownerEmail', 'passwordHash', 'passwordSalt',
-  'createdAt', 'failedAttempts', 'lockedUntil'
-];
-SCHEMA[CONFIG.SHEET_MEMBERS] = [
-  'memberId', 'householdId', 'name', 'role', 'pinHash', 'pinSalt',
-  'color', 'points', 'active', 'createdAt', 'failedAttempts', 'lockedUntil'
-];
-SCHEMA[CONFIG.SHEET_SESSIONS] = [
-  'token', 'kind', 'householdId', 'memberId', 'deviceLabel',
-  'createdAt', 'lastSeenAt', 'expiresAt'
-];
-SCHEMA[CONFIG.SHEET_CHORES] = [
-  'choreId', 'householdId', 'title', 'notes', 'category', 'points', 'status',
-  'createdBy', 'createdAt', 'assigneeId', 'claimedAt', 'startedAt',
-  'submittedAt', 'approvedBy', 'approvedAt', 'dueDate', 'recurrence',
-  'reviewNote'
-];
-SCHEMA[CONFIG.SHEET_LOG] = [
-  'at', 'householdId', 'choreId', 'memberId', 'action', 'detail'
-];
+/**
+ * The header row of one sheet.
+ *
+ * Built on first use rather than at file scope. Apps Script evaluates a
+ * project's files in an order it does not promise, so reading CONFIG while
+ * this file loads is a coin toss -- and losing it is not a small bug: the
+ * whole project fails to load and every single call dies with a TypeError
+ * nowhere near the cause.
+ */
+var _schema = null;
+
+function schema(name) {
+  if (!_schema) {
+    _schema = {};
+    _schema[CONFIG.SHEET_HOUSEHOLDS] = [
+      'householdId', 'name', 'ownerEmail', 'passwordHash', 'passwordSalt',
+      'createdAt', 'failedAttempts', 'lockedUntil'
+    ];
+    _schema[CONFIG.SHEET_MEMBERS] = [
+      'memberId', 'householdId', 'name', 'role', 'pinHash', 'pinSalt',
+      'color', 'points', 'active', 'createdAt', 'failedAttempts', 'lockedUntil'
+    ];
+    _schema[CONFIG.SHEET_SESSIONS] = [
+      'token', 'kind', 'householdId', 'memberId', 'deviceLabel',
+      'createdAt', 'lastSeenAt', 'expiresAt'
+    ];
+    _schema[CONFIG.SHEET_CHORES] = [
+      'choreId', 'householdId', 'title', 'notes', 'category', 'points',
+      'status', 'createdBy', 'createdAt', 'assigneeId', 'claimedAt',
+      'startedAt', 'submittedAt', 'approvedBy', 'approvedAt', 'dueDate',
+      'recurrence', 'reviewNote'
+    ];
+    _schema[CONFIG.SHEET_LOG] = [
+      'at', 'householdId', 'choreId', 'memberId', 'action', 'detail'
+    ];
+  }
+  return _schema[name];
+}
 
 // ---------------------------------------------------------------------
 // Getting at the file
@@ -69,7 +85,7 @@ function tab(name) {
 
 /** Lays down (or repairs) the header row and freezes it. */
 function writeHeader(sh, name) {
-  var head = SCHEMA[name];
+  var head = schema(name);
   if (!head) return;
   sh.getRange(1, 1, 1, head.length).setValues([head])
     .setFontWeight('bold').setBackground('#02407d').setFontColor('#ffffff');
@@ -89,7 +105,7 @@ function rows(name) {
   var last = sh.getLastRow();
   if (last < 2) return [];
 
-  var head = SCHEMA[name];
+  var head = schema(name);
   var values = sh.getRange(2, 1, last - 1, head.length).getValues();
   var out = [];
 
@@ -125,7 +141,7 @@ function findOne(name, where) {
 
 /** Appends a record, filling unmentioned columns with ''. Returns it. */
 function insert(name, rec) {
-  var head = SCHEMA[name];
+  var head = schema(name);
   var line = head.map(function (k) {
     return rec[k] === undefined || rec[k] === null ? '' : rec[k];
   });
@@ -139,7 +155,7 @@ function insert(name, rec) {
  */
 function update(name, rec, changes) {
   if (!rec || !rec._row) throw new Error('update() needs a row read from the sheet.');
-  var head = SCHEMA[name];
+  var head = schema(name);
   var sh = tab(name);
 
   for (var k in changes) {

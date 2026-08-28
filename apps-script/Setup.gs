@@ -40,7 +40,7 @@ function setUp() {
       console.log('Added sheet: ' + name);
     }
     writeHeader(sh, name);
-    sh.autoResizeColumns(1, SCHEMA[name].length);
+    sh.autoResizeColumns(1, schema(name).length);
   });
 
   // Drop the default "Sheet1" if it is still there and empty.
