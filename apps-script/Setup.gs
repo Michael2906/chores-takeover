@@ -65,13 +65,33 @@ function setUp() {
 
   // The nightly hand-out. Installed here so a normal setup needs nothing
   // else; it replaces its own old trigger rather than stacking a second one.
-  installDailyFill();
+  //
+  // Caught rather than allowed to throw: everything above this line has
+  // already been written, and losing that because the trigger could not be
+  // installed would be a poor trade. The usual cause is the authorisation
+  // being older than the script.scriptapp scope, which one re-run fixes.
+  var triggerOk = true;
+  try {
+    installDailyFill();
+  } catch (err) {
+    triggerOk = false;
+    console.error('Could not install the nightly hand-out: ' + err);
+  }
 
   console.log('');
   console.log('Setup complete.');
   console.log('Spreadsheet: ' + ss.getUrl());
   console.log('');
-  console.log('The Trough and The Sty now hand themselves out nightly.');
+  if (triggerOk) {
+    console.log('The Trough and The Sty now hand themselves out nightly.');
+  } else {
+    console.log('');
+    console.log('*** THE NIGHTLY HAND-OUT IS NOT INSTALLED ***');
+    console.log('Everything else above worked. Re-run setUp and approve the');
+    console.log('permissions prompt when it appears -- managing triggers is a');
+    console.log('scope your earlier authorisation did not include.');
+    console.log('Then checkDailyFill() should say it is installed.');
+  }
   console.log('');
   console.log('Next: Deploy > New deployment > Web app,');
   console.log('  Execute as: Me,  Who has access: Anyone.');
