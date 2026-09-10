@@ -182,7 +182,7 @@ exactly that or the page will not build.
 
 | File | What it does |
 | --- | --- |
-| `preview.py` | Renders the templates into `build/preview.html`, plus `build/wrapper.html` for testing the custom-domain bridge. |
+| `preview.py` | Renders the templates into `build/preview.html`, plus `build/wrapper.html` for testing the custom-domain bridge. It also inlines `Suggestions.gs` and `PrizeIdeas.gs`, so the preview offers the real lists rather than a copy that can drift. |
 | `mock_backend.js` | A small in-memory stand-in for `google.script.run`, used only by the preview. |
 | `build_images.py` | Rebuilds `Images.html` from `/images`. Run after changing the logo. |
 
@@ -437,6 +437,20 @@ anyway — PEPPER is the real defence.
 **Email is off by default.** `CONFIG.EMAIL_ON_SUBMIT` will mail the account
 holder when work is submitted. A consumer Google account allows about 100
 emails a day.
+
+**The ready-made lists are not a `<datalist>`.** They look like the obvious
+use for one, and it was tried. Mobile Safari renders no dropdown for a
+datalist at all, and the Android browsers that do are inconsistent about it,
+so on a phone -- which is most of how this gets used -- the 147 chores could
+not be browsed, only guessed at blind. `comboHtml` / `wireCombo` in
+`Scripts.html` are the replacement, built from ordinary DOM: still a box you
+can type anything into, plus a list you can tap, and it shows each chore's
+category, points and repeat next to it, which a datalist cannot do either.
+
+The panel deliberately sits **in the normal flow** rather than floating over
+the form. The dialog is a scroll container, so an absolutely-positioned panel
+gets clipped at its edge; in flow it pushes the rest of the form down and the
+dialog scrolls to it.
 
 **Claiming is locked.** Two children hitting Claim on the same chore at the
 same moment is the whole point of a shared pool, so the claim and the approval

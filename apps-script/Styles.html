@@ -233,7 +233,8 @@ h1, h2, h3 { line-height: 1.25; }
 .form { display: flex; flex-direction: column; gap: var(--spacing-md); }
 
 .field { display: flex; flex-direction: column; gap: var(--spacing-xs); }
-.field > span { font-weight: bold; font-size: 0.9rem; }
+.field > span,
+.field > label { font-weight: bold; font-size: 0.9rem; }
 .field > small { color: var(--muted); font-size: 0.8rem; }
 
 .field input,
@@ -1043,6 +1044,101 @@ h1, h2, h3 { line-height: 1.25; }
 /* -------------------------------------------------------------------
    hover -- pointer devices only, so a tap does not leave a stuck state
    ------------------------------------------------------------------- */
+/* -------------------------------------------------------------------
+   the ready-made-list combobox
+   -------------------------------------------------------------------
+   Replaces <input list> + <datalist>. Mobile Safari draws no dropdown for a
+   datalist at all and the Android browsers that do are inconsistent, so on a
+   phone the ready-made chores were simply invisible. Built out of ordinary
+   DOM instead, so every browser shows the same thing.
+
+   The panel is IN FLOW, not absolutely positioned. The modal is a scroll
+   container, so a floating panel is clipped at its edge; in flow it pushes
+   the form down and the modal scrolls to it. It carries its own max-height
+   so a 147-item list cannot run off the screen.
+   ------------------------------------------------------------------- */
+
+.combo { display: flex; flex-direction: column; gap: var(--spacing-xs); }
+
+.combo-bar { display: flex; gap: var(--spacing-xs); align-items: stretch; }
+.combo-bar input { flex: 1 1 auto; min-width: 0; }
+
+.combo-toggle {
+  flex: 0 0 auto;
+  width: 2.9rem;
+  border: 2px solid var(--line);
+  border-radius: var(--border-md);
+  background: var(--card-sunk);
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.combo-toggle:focus-visible { border-color: var(--primary); outline: none; }
+.combo.open .combo-toggle { background: var(--primary); color: var(--light-font); }
+.combo.open .combo-toggle .combo-chev { transform: rotate(180deg); }
+.combo-chev { transition: transform 0.15s ease; }
+
+.combo-panel {
+  max-height: 15rem;
+  overflow-y: auto;
+  /* Never sideways -- a long title wraps instead. */
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  border: 2px solid var(--line);
+  border-radius: var(--border-md);
+  background: var(--card);
+}
+
+.combo-opt {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  width: 100%;
+  text-align: left;
+  padding: var(--spacing-sm);
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  /* A comfortable thumb target -- this is mostly used on a tablet. */
+  min-height: 2.75rem;
+  font-size: max(0.95rem, 15px);
+}
+
+.combo-opt:last-child { border-bottom: none; }
+.combo-opt[hidden] { display: none; }
+/* min-width lets the title shrink and wrap: a flex item otherwise refuses to
+   go below its longest word, which on a narrow screen shoves the points and
+   category off the edge of the row. */
+.combo-label { flex: 1 1 auto; min-width: 0; overflow-wrap: break-word; }
+
+.combo-meta {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+/* Keyboard cursor and touch feedback share one look, so arrowing down and
+   tapping are visibly the same act. */
+.combo-opt.here,
+.combo-opt:active { background: var(--card-sunk); }
+.combo-opt.here { box-shadow: inset var(--border-sm) 0 0 var(--primary); }
+
+@media (hover: hover) and (pointer: fine) {
+  .combo-opt:hover { background: var(--card-sunk); }
+}
+
+.combo-empty {
+  padding: var(--spacing-sm);
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
 @media (hover: hover) and (pointer: fine) {
   .tab:not(.active):hover,
   #search-clear:hover,

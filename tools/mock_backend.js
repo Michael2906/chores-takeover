@@ -35,12 +35,14 @@
   var PALETTE = ['#2f5d8a', '#9c6259', '#c2ab72', '#5f9384',
                  '#7a6a99', '#c08760', '#5d8aa6', '#8a9463'];
 
-  // A short stand-in for CONFIG.SUGGESTIONS -- enough to exercise the
-  // autofill, not a copy of the whole list.
-  var SUGGESTIONS = [
+  // The real list, loaded from Suggestions.gs by preview.py -- so the
+  // preview shows the 147 chores that actually ship, at the volume that
+  // actually ships. The short list below is only the fallback for opening
+  // build/preview.html from an older build.
+  var SUGGESTIONS = typeof suggestionList === 'function' ? suggestionList() : [
     { title: 'Load the dishwasher', category: 'Kitchen', points: 3,
       recurrence: 'daily', notes: 'Rinse the plates first.' },
-    { title: 'Take the bins out', category: 'Trash', points: 2,
+    { title: 'Take the trash cans out', category: 'Trash', points: 2,
       recurrence: 'weekly', notes: 'Check which bin it is this week.' },
     { title: 'Clean the bathroom', category: 'Bathroom', points: 10,
       recurrence: 'weekly', notes: 'Sink, toilet, bath, mirror.' },
@@ -51,7 +53,7 @@
       recurrence: 'monthly', notes: '' }
   ];
 
-  var PRIZE_IDEAS = [
+  var PRIZE_IDEAS = typeof prizeIdeas === 'function' ? prizeIdeas() : [
     { name: '30 minutes of extra screen time', cost: 10, notes: 'Screen time' },
     { name: 'An ice cream',                    cost: 15, notes: 'Food' },
     { name: 'Stay up 30 minutes later',        cost: 20, notes: 'Bedtime' },
@@ -95,8 +97,8 @@
 
     [
       ['Load the dishwasher', 'Rinse the plates first.', 'Kitchen', 3, 'pool', '', day(0), 'daily'],
-      ['Take the bins out', 'Blue bin this week.', 'Trash', 2, 'pool', '', day(-2), 'weekly'],
-      ['Hoover the front room', '', 'Bedroom', 5, 'pool', '', '', ''],
+      ['Take the trash cans out', 'Recycling this week.', 'Trash', 2, 'pool', '', day(-2), 'weekly'],
+      ['Vacuum the living room', '', 'Living Areas', 5, 'pool', '', '', ''],
       ['Walk the dog', 'Long way round.', 'Pets', 3, 'claimed', 2, day(0), 'daily'],
       ['Fold the laundry', '', 'Laundry', 4, 'claimed', 3, day(1), ''],
       ['Clean your room', 'Under the bed as well.', 'Bedroom', 10, 'in_progress', 2, day(1), ''],
@@ -125,7 +127,7 @@
     DB.chores.push({
       ref: nextRef(),
       choreId: id('c'), householdId: h.householdId,
-      title: 'Wipe the worktops', notes: '', category: 'Kitchen', points: 4,
+      title: 'Wipe the counters', notes: '', category: 'Kitchen', points: 4,
       status: 'in_progress', createdBy: m[0].memberId, createdAt: now(),
       assigneeId: m[2].memberId, claimedAt: now(), startedAt: now(),
       submittedAt: '', approvedBy: '', approvedAt: '',
@@ -137,10 +139,10 @@
   // in them the moment the preview opens.
   DB.trough = [
     { troughId: 'tr1', title: 'Load the dishwasher', category: 'Kitchen', points: 3, notes: '' },
-    { troughId: 'tr2', title: 'Take the bins out',   category: 'Trash',   points: 2, notes: '' },
+    { troughId: 'tr2', title: 'Take the trash cans out', category: 'Trash', points: 2, notes: '' },
     { troughId: 'tr3', title: 'Feed the pets',       category: 'Pets',    points: 2, notes: '' },
-    { troughId: 'tr4', title: 'Tidy the front room', category: 'Living Areas', points: 4, notes: '' },
-    { troughId: 'tr5', title: 'Hoover the stairs',   category: 'Living Areas', points: 6, notes: '' },
+    { troughId: 'tr4', title: 'Tidy the living room', category: 'Living Areas', points: 4, notes: '' },
+    { troughId: 'tr5', title: 'Vacuum the stairs',   category: 'Living Areas', points: 6, notes: '' },
     { troughId: 'tr6', title: 'Make your bed',       category: 'Bedroom', points: 1, notes: '' }
   ];
 

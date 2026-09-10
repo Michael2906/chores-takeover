@@ -1117,24 +1117,18 @@
       (t.canEdit
         ? '<hr class="hr">' +
           '<form class="form" id="trough-add">' +
-            '<label class="field"><span>Add to the list</span>' +
-              '<input name="title" list="sugg-list-t" maxlength="120" ' +
-                     'autocomplete="off" placeholder="Pick one, or type your own" />' +
-              '<datalist id="sugg-list-t">' +
-                state.suggestions.map(function (x) {
-                  return '<option value="' + esc(x.title) + '"></option>';
-                }).join('') +
-              '</datalist></label>' +
-            '<div class="chips">' +
-              '<input type="number" name="points" min="0" max="999" ' +
-                     'placeholder="Points" style="max-width:7rem" />' +
-              '<input name="category" list="cat-list-t" maxlength="40" ' +
-                     'placeholder="Category" style="max-width:10rem" />' +
-              '<datalist id="cat-list-t">' +
-                state.categories.map(function (c) {
-                  return '<option value="' + esc(c) + '"></option>';
-                }).join('') +
-              '</datalist>' +
+            '<div class="field"><label for="trough-title">Add to the list</label>' +
+              comboHtml({ id: 'trough-title', name: 'title',
+                          options: choreOptions() }) +
+            '</div>' +
+            '<div class="field"><label for="trough-points">Points</label>' +
+              '<input type="number" id="trough-points" name="points" ' +
+                     'min="0" max="999" style="max-width:7rem" />' +
+            '</div>' +
+            '<div class="field"><label for="trough-cat">Category</label>' +
+              comboHtml({ id: 'trough-cat', name: 'category', maxlength: 40,
+                          placeholder: 'Pick one, or type your own',
+                          options: plainOptions(state.categories) }) +
             '</div>' +
           '</form>'
         : ''),
@@ -1159,8 +1153,11 @@
     // Picking a ready-made chore fills the points and category in.
     var addForm = $('trough-add');
     if (addForm) {
+      wireCombo('trough-title');
+      wireCombo('trough-cat');
       addForm.title.addEventListener('input', function () {
         var typed = addForm.title.value.trim().toLowerCase();
+        if (!typed) return;
         for (var i = 0; i < state.suggestions.length; i++) {
           var x = state.suggestions[i];
           if (String(x.title).toLowerCase() === typed) {
@@ -1237,6 +1234,239 @@
   }
 
   // -----------------------------------------------------------------
+  // The ready-made-list combobox
+  // -----------------------------------------------------------------
+  //
+  // Stands in for <input list="..."> + <datalist>. A datalist gets no dropdown
+  // at all on mobile Safari, and the Android browsers that do render one are
+  // inconsistent about it -- so on a phone the ready-made chores could not be
+  // browsed, only guessed at. This is the same combobox built out of ordinary
+  // DOM: still a text box you can type anything into, plus a list you can
+  // actually tap.
+  //
+  // Selecting fires an 'input' event on the box, so the existing "fill the
+  // rest of the form in" handlers keep working untouched -- they cannot tell a
+  // tap from typing, which is what they already assumed.
+  //
+  // cfg: { id, name, options: [{ value, meta }], value, placeholder,
+  //        required, maxlength }
+  function comboHtml(cfg) {
+    var opts = (cfg.options || []).map(function (o, i) {
+      return '<button type="button" class="combo-opt" role="option" ' +
+                     'data-i="' + i + '" data-value="' + esc(o.value) + '">' +
+               '<span class="combo-label">' + esc(o.value) + '</span>' +
+               (o.meta
+                 ? '<span class="combo-meta">' + esc(o.meta) + '</span>'
+                 : '') +
+             '</button>';
+    }).join('');
+
+    var attrs =
+      'id="' + cfg.id + '" name="' + esc(cfg.name) + '" ' +
+      'value="' + esc(cfg.value || '') + '" ' +
+      'placeholder="' + esc(cfg.placeholder || 'Pick one, or type your own') + '" ' +
+      'maxlength="' + (cfg.maxlength || 120) + '" ' +
+      'autocomplete="off" role="combobox" aria-expanded="false" ' +
+      'aria-autocomplete="list" aria-controls="' + cfg.id + '-panel"' +
+      (cfg.required ? ' required' : '');
+
+    return '<div class="combo" id="' + cfg.id + '-combo">' +
+             '<div class="combo-bar">' +
+               '<input ' + attrs + ' />' +
+               (opts
+                 ? '<button type="button" class="combo-toggle" ' +
+                           'id="' + cfg.id + '-toggle" ' +
+                           'aria-label="Show the list" tabindex="-1">' +
+                     '<span class="combo-chev">▾</span>' +
+                   '</button>'
+                 : '') +
+             '</div>' +
+             (opts
+               ? '<div class="combo-panel" id="' + cfg.id + '-panel" ' +
+                        'role="listbox" hidden>' + opts +
+                   '<p class="combo-empty" id="' + cfg.id + '-none" hidden>' +
+                     'Nothing matches -- what you have typed is used as it is.' +
+                   '</p>' +
+                 '</div>'
+               : '') +
+           '</div>';
+  }
+
+  /**
+   * Brings a comboHtml block to life. Call once, after the markup is in the
+   * document. Safe to call for an id that was rendered without options.
+   */
+  function wireCombo(id) {
+    var box = $(id);
+    var panel = $(id + '-panel');
+    if (!box || !panel) return;
+
+    var wrap = $(id + '-combo');
+    var toggle = $(id + '-toggle');
+    var none = $(id + '-none');
+    var opts = [].slice.call(panel.querySelectorAll('.combo-opt'));
+    var here = -1;
+    var picking = false;
+
+    function shown() {
+      return opts.filter(function (o) { return !o.hidden; });
+    }
+
+    function mark(el) {
+      opts.forEach(function (o) { o.classList.remove('here'); });
+      if (el) {
+        el.classList.add('here');
+        // Only the panel scrolls -- never the page, which on a phone would
+        // yank the form out from under the thumb.
+        if (el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+      }
+    }
+
+    function open() {
+      if (!panel.hidden) return;
+      panel.hidden = false;
+      wrap.classList.add('open');
+      box.setAttribute('aria-expanded', 'true');
+    }
+
+    function shut() {
+      if (panel.hidden) return;
+      panel.hidden = true;
+      wrap.classList.remove('open');
+      box.setAttribute('aria-expanded', 'false');
+      here = -1;
+      mark(null);
+    }
+
+    /** Substring, case-insensitive. An empty box shows everything. */
+    function filter() {
+      var q = box.value.trim().toLowerCase();
+      var n = 0;
+
+      // A box holding one of the rows exactly is a finished choice, not a
+      // search in progress. Narrowing to the single row somebody just picked
+      // would leave them no way to change their mind, so show the lot.
+      if (q && opts.some(function (o) {
+            return o.dataset.value.toLowerCase() === q;
+          })) {
+        q = '';
+      }
+      opts.forEach(function (o) {
+        var hit = !q || o.dataset.value.toLowerCase().indexOf(q) >= 0;
+        o.hidden = !hit;
+        if (hit) n++;
+      });
+      if (none) none.hidden = n > 0;
+      here = -1;
+      mark(null);
+    }
+
+    function choose(el) {
+      box.value = el.dataset.value;
+
+      // What tells the form to fill itself in. Bubbles, like a real edit --
+      // which is the point, and also why the flag is needed: our own 'input'
+      // listener would otherwise read it as typing and re-open the list.
+      picking = true;
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+      picking = false;
+
+      shut();
+      box.focus();
+    }
+
+    box.addEventListener('input', function () {
+      if (picking) return;
+      filter();
+      open();
+    });
+
+    // A tap opens it, focus alone does not: openModal focuses the first
+    // control in the dialog, and a list that unfurls on arrival buries the
+    // rest of the form. ArrowDown is the keyboard's way in.
+    box.addEventListener('click', function () { filter(); open(); });
+
+    // mousedown, not click: a click lands after the box has already blurred.
+    panel.addEventListener('mousedown', function (e) { e.preventDefault(); });
+    panel.addEventListener('click', function (e) {
+      var el = e.target.closest('.combo-opt');
+      if (el) choose(el);
+    });
+
+    if (toggle) {
+      toggle.addEventListener('click', function () {
+        if (panel.hidden) { filter(); open(); box.focus(); } else { shut(); }
+      });
+    }
+
+    box.addEventListener('keydown', function (e) {
+      var list = shown();
+
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (panel.hidden) { filter(); open(); list = shown(); }
+        if (!list.length) return;
+        var at = list.indexOf(opts[here]);
+        at = e.key === 'ArrowDown'
+          ? (at + 1) % list.length
+          : (at <= 0 ? list.length - 1 : at - 1);
+        here = opts.indexOf(list[at]);
+        mark(list[at]);
+        return;
+      }
+
+      // Enter takes the highlighted row, and otherwise falls through so the
+      // form behaves as it always did -- typing your own and pressing return
+      // must not be hijacked.
+      if (e.key === 'Enter' && !panel.hidden && here >= 0) {
+        e.preventDefault();
+        choose(opts[here]);
+        return;
+      }
+
+      if (e.key === 'Escape' && !panel.hidden) {
+        e.stopPropagation();   // ...or the whole modal goes with it.
+        shut();
+      }
+    });
+
+    // A tap anywhere else puts it away. Hung on openModal's cleanup chain so
+    // it comes off with the dialog -- otherwise every dialog opened leaves its
+    // comboboxes' listeners behind on a document that outlives them.
+    var away = function (e) { if (!wrap.contains(e.target)) shut(); };
+    document.addEventListener('mousedown', away);
+
+    var prevCleanup = modalCleanup;
+    modalCleanup = function () {
+      document.removeEventListener('mousedown', away);
+      if (prevCleanup) prevCleanup();
+    };
+
+    box.addEventListener('blur', function () {
+      // After the panel's own mousedown, which is already prevented.
+      setTimeout(function () {
+        if (!wrap.contains(document.activeElement)) shut();
+      }, 0);
+    });
+  }
+
+  /** The ready-made chores, shaped for comboHtml. */
+  function choreOptions() {
+    return state.suggestions.map(function (x) {
+      var bits = [];
+      if (x.category) bits.push(x.category);
+      if (Number(x.points)) bits.push(x.points + 'p');
+      if (x.recurrence) bits.push(x.recurrence);
+      return { value: x.title, meta: bits.join(' · ') };
+    });
+  }
+
+  /** A plain list of strings, shaped for comboHtml. */
+  function plainOptions(list) {
+    return (list || []).map(function (v) { return { value: v }; });
+  }
+
+  // -----------------------------------------------------------------
   // Modals
   // -----------------------------------------------------------------
 
@@ -1308,10 +1538,6 @@
     var editing = !!existing;
     var c = existing || {};
 
-    var cats = state.categories.map(function (x) {
-      return '<option value="' + esc(x) + '"></option>';
-    }).join('');
-
     var chosen = Number(c.points) || 0;
     var isPreset = state.pointPresets.indexOf(chosen) >= 0 || chosen === 0;
 
@@ -1319,12 +1545,6 @@
       return '<button type="button" class="chip-pick' +
              (chosen === p ? ' on' : '') +
              '" data-points="' + p + '">' + p + 'p</button>';
-    }).join('');
-
-    // Ready-made chores. Picking one fills the rest of the form in; typing
-    // something not on the list just leaves the form to be filled by hand.
-    var suggs = state.suggestions.map(function (x) {
-      return '<option value="' + esc(x.title) + '"></option>';
     }).join('');
 
     var people = state.members.map(function (m) {
@@ -1335,26 +1555,26 @@
 
     openModal(editing ? 'Edit chore' : 'New chore',
       '<form class="form" id="chore-form">' +
-        '<label class="field"><span>What needs doing?</span>' +
-          '<input name="title" required maxlength="120" list="sugg-list" ' +
-                 'autocomplete="off" ' +
-                 'value="' + esc(c.title || '') + '" ' +
-                 'placeholder="Pick one, or type your own" />' +
-          '<datalist id="sugg-list">' + suggs + '</datalist>' +
+        // Ready-made chores. Picking one fills the rest of the form in;
+        // typing something not on the list leaves it to be filled by hand.
+        '<div class="field"><label for="chore-title">What needs doing?</label>' +
+          comboHtml({ id: 'chore-title', name: 'title', required: true,
+                      value: c.title, options: choreOptions() }) +
           '<small id="sugg-hint">' +
             (state.suggestions.length
               ? 'Pick a ready-made chore to fill the rest in, or type your own.'
               : '') +
-          '</small></label>' +
+          '</small></div>' +
 
         '<label class="field"><span>Details <small>(optional)</small></span>' +
           '<textarea name="notes" maxlength="1000">' + esc(c.notes || '') +
           '</textarea></label>' +
 
-        '<label class="field"><span>Category</span>' +
-          '<input name="category" list="cat-list" maxlength="40" ' +
-                 'value="' + esc(c.category || '') + '" />' +
-          '<datalist id="cat-list">' + cats + '</datalist></label>' +
+        '<div class="field"><label for="chore-cat">Category</label>' +
+          comboHtml({ id: 'chore-cat', name: 'category', maxlength: 40,
+                      value: c.category, placeholder: 'Pick one, or type your own',
+                      options: plainOptions(state.categories) }) +
+        '</div>' +
 
         '<div class="field"><span>Points</span>' +
           '<div class="chips" id="point-chips">' + pts +
@@ -1427,6 +1647,9 @@
     var chips = $('point-chips');
     var custom = $('point-custom');
 
+    wireCombo('chore-title');
+    wireCombo('chore-cat');
+
     chips.addEventListener('click', function (e) {
       var b = e.target.closest('[data-points]');
       if (!b) return;
@@ -1454,12 +1677,25 @@
     // Picking a ready-made chore fills the rest of the form in. Everything it
     // sets stays editable -- it is a starting point, not a template.
     //
-    // Fires on 'input' rather than 'change' because a datalist pick and a
-    // typed word are the same event; matching the exact title is what tells
-    // them apart. Typing a name that is not on the list changes nothing else.
+    // Fires on 'input' rather than 'change' because a pick from the list and
+    // a typed word arrive as the same event -- deliberately, so that the two
+    // paths cannot drift apart. Matching the exact title is what tells them
+    // apart; typing a name that is not on the list changes nothing else.
     form.title.addEventListener('input', function () {
       var typed = form.title.value.trim().toLowerCase();
+      var hint = $('sugg-hint');
       var hit = null;
+
+      // An empty box matches nothing. Worth being explicit about: while every
+      // title was blank, clearing the field matched the first suggestion and
+      // the form filled itself in unbidden.
+      if (!typed) {
+        if (hint && state.suggestions.length) {
+          hint.textContent =
+            'Pick a ready-made chore to fill the rest in, or type your own.';
+        }
+        return;
+      }
 
       for (var i = 0; i < state.suggestions.length; i++) {
         if (String(state.suggestions[i].title).toLowerCase() === typed) {
@@ -1487,7 +1723,6 @@
       custom.hidden = preset;
       if (!preset) custom.value = p;
 
-      var hint = $('sugg-hint');
       if (hint) hint.textContent = 'Filled in from “' + hit.title +
                                    '”. Change anything you like.';
     });
@@ -1770,14 +2005,10 @@
       (t.canEdit
         ? '<hr class="hr">' +
           '<form class="form" id="sty-add">' +
-            '<label class="field"><span>Add to the list</span>' +
-              '<input name="title" list="sugg-list-y" maxlength="120" ' +
-                     'autocomplete="off" placeholder="Pick one, or type your own" />' +
-              '<datalist id="sugg-list-y">' +
-                state.suggestions.map(function (x) {
-                  return '<option value="' + esc(x.title) + '"></option>';
-                }).join('') +
-              '</datalist></label>' +
+            '<div class="field"><label for="sty-title">Add to the list</label>' +
+              comboHtml({ id: 'sty-title', name: 'title',
+                          options: choreOptions() }) +
+            '</div>' +
             '<div class="chips">' +
               '<input type="number" name="points" min="0" max="999" ' +
                      'placeholder="Points" style="max-width:7rem" />' +
@@ -1805,8 +2036,10 @@
 
     var addForm = $('sty-add');
     if (addForm) {
+      wireCombo('sty-title');
       addForm.title.addEventListener('input', function () {
         var typed = addForm.title.value.trim().toLowerCase();
+        if (!typed) return;
         for (var i = 0; i < state.suggestions.length; i++) {
           var x = state.suggestions[i];
           if (String(x.title).toLowerCase() === typed) {
@@ -1935,16 +2168,14 @@
       (st.canManage
         ? '<hr class="hr">' +
           '<form class="form" id="prize-add">' +
-            '<label class="field"><span>Add a prize</span>' +
-              '<input name="name" maxlength="80" list="prize-ideas" ' +
-                     'autocomplete="off" placeholder="Pick one, or type your own" />' +
-              '<datalist id="prize-ideas">' +
-                (st.ideas || []).map(function (x) {
-                  return '<option value="' + esc(x.name) + '"></option>';
-                }).join('') +
-              '</datalist>' +
+            '<div class="field"><label for="prize-name">Add a prize</label>' +
+              comboHtml({ id: 'prize-name', name: 'name', maxlength: 80,
+                          options: (st.ideas || []).map(function (x) {
+                            return { value: x.name,
+                                     meta: Number(x.cost) ? x.cost + 'p' : '' };
+                          }) }) +
               '<small>' + (st.ideas || []).length +
-              ' ready-made ideas with costs already set.</small></label>' +
+              ' ready-made ideas with costs already set.</small></div>' +
             '<div class="chips">' +
               '<input type="number" name="cost" min="0" placeholder="Cost" ' +
                      'style="max-width:7rem" />' +
@@ -1984,9 +2215,11 @@
 
     var pf = $('prize-add');
     if (pf) {
+      wireCombo('prize-name');
       pf.name.addEventListener('input', function () {
         var typed = pf.name.value.trim().toLowerCase();
         var ideas = st.ideas || [];
+        if (!typed) return;
         for (var i = 0; i < ideas.length; i++) {
           if (String(ideas[i].name).toLowerCase() === typed) {
             pf.cost.value = ideas[i].cost;

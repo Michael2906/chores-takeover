@@ -101,6 +101,13 @@ def render():
         raise SystemExit("Unrendered scriptlets remain: %r" % leftover[:3])
 
     # Stand in for google.script.run, before the app's own script runs.
+    #
+    # The two ready-made lists are loaded from the real files rather than
+    # copied into the mock. They are plain data behind a function with no
+    # Apps Script API in them, so they run in a browser as they are -- and a
+    # second copy is a second thing to drift.
+    data = "\n".join(read(os.path.join(SRC, f))
+                     for f in ("Suggestions.gs", "PrizeIdeas.gs"))
     mock = read(os.path.join(HERE, "mock_backend.js"))
     banner = (
         '<div style="position:fixed;left:0;right:0;bottom:0;z-index:99;'
@@ -137,7 +144,8 @@ def render():
 
     html = html.replace(
         "</body>",
-        banner + "\n<script>\n" + mock + "\n</script>\n" + autofill + "</body>")
+        banner + "\n<script>\n" + data + "\n</script>\n" +
+        "\n<script>\n" + mock + "\n</script>\n" + autofill + "</body>")
 
     # The mock must be defined before Scripts.html's DOMContentLoaded fires;
     # putting it last in <body> is enough, but move it ahead of the app script
