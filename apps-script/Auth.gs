@@ -667,7 +667,11 @@ function changeHouseholdPassword(payload) {
 
 /** The palette sub-accounts are coloured from, in the order they are added. */
 function memberColor(i) {
-  var palette = ['#02407d', '#914a42', '#bba255', '#2e8b74',
-                 '#6a4c93', '#c1683c', '#3d7ea6', '#7a8b3d'];
+  // Eight, in the order they get handed out. Every one of them is dark
+  // enough to carry white text at 4.5:1 -- the colour is used as the fill
+  // behind somebody's initial and behind their name on a chore card, so a
+  // pale entry here is an unreadable label there.
+  var palette = ['#1f4ed8', '#c62828', '#00695c', '#6a1b9a',
+                 '#b34700', '#2e7d32', '#ad1457', '#37474f'];
   return palette[i % palette.length];
 }

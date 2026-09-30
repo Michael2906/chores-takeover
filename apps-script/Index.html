@@ -2,6 +2,12 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <!-- Apps Script's own wrapper page (and docs/index.html) already
+         set this, so it changes nothing in production -- but it is what
+         makes the page render at phone width when it is opened on its
+         own, which is how the local preview runs. -->
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <!-- Apps Script serves this page inside an iframe. Without base target
          _top, every link would open inside that frame. -->
     <base target="_top" />

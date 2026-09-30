@@ -420,6 +420,57 @@ for chores that need doing again.
 
 ---
 
+## The look
+
+All of it lives in `Styles.html`. There is no framework and no build step, so
+the whole design is one file of plain CSS with custom properties at the top.
+
+Three rules hold it together, and every component below them is an
+application of the three:
+
+1. **Every surface is outlined in ink.** One border width (`--bw`, 3px) for
+   panels, a thinner one (2px) for small things like pills and tabs.
+2. **Every raised surface casts a solid shadow**, offset down and right, with
+   zero blur (`--pop` and friends).
+3. **Pressing something moves it into its own shadow** — `translate(3px, 3px)`
+   and the shadow goes to nothing, so the thing you pressed ends up flat on
+   the page. Hovering does the opposite: it lifts away from the shadow.
+
+The palette is ink and bone for the layout, and six brights that carry
+meaning and nothing else. They are used flat — never blended, never a
+gradient.
+
+| Token | | Used for |
+| --- | --- | --- |
+| `--ink` | `#14100e` | Every border, every shadow, all body text |
+| `--bone` | `#f2e9d6` | The page behind the cards |
+| `--paper` | `#fffdf7` | Cards, modals, inputs |
+| `--blue` | `#2f6bff` | The pool; the active tab; primary buttons |
+| `--lime` | `#c9f227` | The header; points; go buttons; done |
+| `--sun` | `#ffd84d` | Claimed; send-back; costs |
+| `--mint` | `#26dfb8` | In progress |
+| `--violet` | `#9b6bff` | Waiting for approval; repeats; focus rings |
+| `--coral` | `#ff5a4e` | Overdue; the add button |
+
+A chore card's status is the fat colour bar down its left edge, drawn inside
+the card as a `::before` rather than as its border, so every card keeps the
+same ink outline and only the colour changes. The status colours are set as
+one custom property per state (`.chore.s-pool { --status: … }`), which is the
+only place they are decided.
+
+Type is **Archivo** for everything and **Space Mono** for numbers — points,
+costs, PIN keys, chore references. Both come from Google Fonts with a system
+fallback, so a blocked request costs the look and not the layout.
+
+**Member colours must be dark.** `memberColor()` in `Auth.gs` hands out eight,
+and the fill is used behind white text — somebody's initial in their avatar,
+their name on a chore card. A pale entry there is an unreadable label here.
+The stylesheet rings that text in ink as a second line of defence, because a
+household created before the current palette can still be holding an old
+colour.
+
+---
+
 ## Things worth knowing
 
 **PEPPER is create-once.** It is generated on first use and stored in script

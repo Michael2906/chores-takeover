@@ -5,7 +5,7 @@
     <meta name="viewport"
           content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Chore Boar</title>
-    <meta name="theme-color" content="#2ecfb4" />
+    <meta name="theme-color" content="#c9f227" />
     <meta name="description" content="Somebody has to do it." />
 
     <link rel="icon" href="./icon.png" />
@@ -22,7 +22,9 @@
         margin: 0;
         padding: 0;
         height: 100%;
-        background: #545454;
+        /* The app's own splash, so the moment before the frame paints
+           is the same colour as the moment after it. */
+        background: #c9f227;
         overflow: hidden;
       }
       iframe {
@@ -33,12 +35,13 @@
       }
       #fallback {
         display: none;
-        font: 16px/1.5 Arial, Helvetica, sans-serif;
-        color: #d0d0d0;
+        font: 16px/1.5 Archivo, 'Segoe UI', Arial, Helvetica, sans-serif;
+        font-weight: 700;
+        color: #14100e;
         padding: 2rem;
         text-align: center;
       }
-      #fallback a { color: #2ecfb4; }
+      #fallback a { color: #14100e; }
     </style>
   </head>
 
