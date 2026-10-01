@@ -9,187 +9,131 @@
     <meta name="description" content="Every household at once." />
 
     <!--
-      This page exists for ONE reason: the home-screen icon.
+      ===================================================================
+      This page exists for ONE reason: to own the home-screen icon.
+      ===================================================================
 
       iOS reads apple-touch-icon from the TOP-LEVEL document. Added straight
-      from the /exec URL the top-level document is Google's own wrapper, which
-      we cannot touch, so the icon came out as a grey letter. setFaviconUrl()
-      on the HtmlOutput fixes the browser tab and is enough for Android; iOS
-      wants this tag, and this tag has to live on a page we serve.
+      from the /exec URL that document is Google's own wrapper page, which we
+      cannot put a tag in -- so the icon came out as a grey letter.
 
-      Everything else here is incidental. Unlike the family wrapper, this one
-      is NOT a token bridge -- the admin's sessions are borrowed, last two
-      hours, and are deliberately never written to storage.
+      WHAT THIS PAGE DOES NOT DO, AND WHY.
+
+      It does not frame the admin app. That was tried two ways and both
+      failed for the same underlying reason: the admin deployment is "only
+      myself", so Google has to authenticate the visitor, and its sign-in
+      flow navigates the TOP window rather than the frame.
+
+        - Framed plainly, the sign-in dragged the whole tab to
+          script.google.com a second after load. Add to Home Screen then
+          offered the Google URL and a grey letter, because by the time the
+          share sheet opened you were not on this page any more.
+
+        - Framed in a sandbox without allow-top-navigation, the tab stayed
+          put but the sign-in callback had nowhere to land, and Google
+          answered "the server cannot process the request because it is
+          malformed".
+
+      An authenticated web app does not belong in somebody else's iframe. So
+      this is a launcher instead, which pushes the awkwardness somewhere it
+      costs nothing:
+
+        OPENED IN A SAFARI TAB   it stays here and shows a button. Nothing
+                                 can redirect out from under you, so Add to
+                                 Home Screen always captures THIS url and
+                                 this icon.
+
+        OPENED FROM THE ICON     it goes straight through to the app. The
+                                 icon was baked in when the shortcut was
+                                 made, so the jump costs nothing.
     -->
-    <!-- Absolute, sized, and versioned. Relative paths are fine here, but
-         absolute removes one thing that can be wrong; `sizes` tells iOS it
-         does not need to go looking for a better match; and the -v2 name
-         means a phone that has already cached an icon for this site has no
-         cached copy of THIS url to prefer. Bump the number if it ever
-         sticks again. -->
     <link rel="icon" href="https://thechoreboar.fyi/icon-admin.png" />
     <link rel="apple-touch-icon" sizes="180x180"
           href="https://thechoreboar.fyi/icon-admin-v2.png" />
     <link rel="apple-touch-icon-precomposed" sizes="180x180"
           href="https://thechoreboar.fyi/icon-admin-v2.png" />
-    <!-- iOS 16.4+ and every Android prefer the manifest's icons over
-         apple-touch-icon when a manifest is present, so both are offered.
-         Belt and braces: whichever one the phone looks at, it finds a boar. -->
     <link rel="manifest" href="/admin.webmanifest" />
     <meta name="apple-mobile-web-app-title" content="Chore Boar Admin" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="mobile-web-app-capable" content="yes" />
 
     <!-- An admin console has no business in a search index. -->
     <meta name="robots" content="noindex, nofollow" />
 
     <style>
-      html, body {
-        margin: 0;
-        padding: 0;
-        height: 100%;
+      html, body { margin: 0; padding: 0; }
+      body {
         background: #f5a33c;
-        overflow: hidden;
-      }
-      iframe {
-        display: block;
-        border: 0;
-        width: 100%;
-        height: 100%;
-        position: relative;
-        z-index: 1;
-      }
-      #brand {
-        position: fixed;
-        inset: 0;
-        z-index: 0;
+        color: #14100e;
+        font: 16px/1.5 Archivo, 'Segoe UI', Arial, Helvetica, sans-serif;
         display: flex;
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 0.8rem;
-        font: 800 15px/1.4 Archivo, 'Segoe UI', Arial, Helvetica, sans-serif;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: #14100e;
-      }
-      #brand img { border: 3px solid #14100e; }
-      /* Shown only if the frame never reports in -- see below. */
-      #stuck {
-        display: none;
-        position: fixed;
-        inset: 0;
-        background: #f5a33c;
-        color: #14100e;
-        font: 16px/1.5 Archivo, 'Segoe UI', Arial, Helvetica, sans-serif;
+        gap: 1.25rem;
+        min-height: 100vh;
+        min-height: 100dvh;
         padding: 2rem 1.5rem;
+        box-sizing: border-box;
         text-align: center;
-        align-items: center;
-        justify-content: center;
-        flex-direction: column;
-        gap: 1rem;
       }
-      #stuck.show { display: flex; }
-      #stuck h1 { font-size: 1.3rem; margin: 0; }
-      #stuck p { margin: 0; max-width: 24rem; }
-      #stuck a {
+      img { border: 3px solid #14100e; box-shadow: 6px 6px 0 #14100e; }
+      h1 {
+        margin: 0;
+        font-size: 1.1rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      a {
         display: inline-block;
         background: #fffdf7;
         color: #14100e;
         border: 3px solid #14100e;
-        box-shadow: 5px 5px 0 #14100e;
-        padding: 0.6rem 1rem;
+        box-shadow: 6px 6px 0 #14100e;
+        padding: 0.75rem 1.4rem;
         font-weight: 800;
         text-transform: uppercase;
+        letter-spacing: 0.03em;
         text-decoration: none;
       }
+      a:active { transform: translate(6px, 6px); box-shadow: none; }
+      p { margin: 0; max-width: 24rem; font-size: 0.85rem; }
     </style>
   </head>
 
   <body>
-    <!--
-      THE SANDBOX IS LOAD-BEARING, and not for the usual reason.
+    <img src="https://thechoreboar.fyi/icon-admin-v2.png" alt=""
+         width="110" height="110" />
+    <h1>Chore Boar Admin</h1>
 
-      This deployment is "only myself", so Google wants to authenticate the
-      visitor -- and its sign-in flow does that by navigating the TOP window,
-      not the frame. The result was that typing thechoreboar.fyi/admin.html
-      landed you on script.google.com a second later, which is also why Add
-      to Home Screen kept offering the Google URL and a grey letter: by the
-      time you opened the share sheet, you were not on this page any more.
+    <a id="go"
+       href="https://script.google.com/macros/s/AKfycby-J7FGzFkGnC0dFFRWz6hpzzXrhBQfMTJfyucNhehv20m_O2_tRfkYnhXSxMpi4XpH/exec">
+      Open the admin page
+    </a>
 
-      Leaving allow-top-navigation OUT of the sandbox removes that power. The
-      address bar stays here no matter what the frame tries.
-
-      Everything else in the list is what the app genuinely needs, and it was
-      checked rather than guessed: an Apps Script web app renders fine under
-      exactly these flags. If sign-in cannot complete in the frame the result
-      is a frame that never reports in, which the panel below already covers.
-    -->
-    <iframe id="app"
-            title="Chore Boar Admin"
-            allow="clipboard-write"
-            sandbox="allow-scripts allow-same-origin allow-forms allow-popups
-                     allow-popups-to-escape-sandbox
-                     allow-storage-access-by-user-activation"
-            src="https://script.google.com/macros/s/AKfycby-J7FGzFkGnC0dFFRWz6hpzzXrhBQfMTJfyucNhehv20m_O2_tRfkYnhXSxMpi4XpH/exec"></iframe>
-
-    <!-- Visible for a moment behind the frame while it loads, and the only
-         thing on screen if the frame is slow. Mostly it answers "am I even
-         on the right page". -->
-    <div id="brand" aria-hidden="true">
-      <img src="https://thechoreboar.fyi/icon-admin-v2.png" alt="" width="90"
-           height="90" />
-      <span>Chore Boar Admin</span>
-    </div>
-
-    <div id="stuck">
-      <h1>Could not load the admin page</h1>
-      <p>
-        This usually means the Google sign-in has lapsed. Signing in has to
-        happen outside the frame, so open it directly once — then come back
-        here and it will work again.
-      </p>
-      <p><strong>Coming back here matters:</strong> the home-screen icon can
-        only be made from this page, never from the Google one.</p>
-      <a id="direct"
-         href="https://script.google.com/macros/s/AKfycby-J7FGzFkGnC0dFFRWz6hpzzXrhBQfMTJfyucNhehv20m_O2_tRfkYnhXSxMpi4XpH/exec"
-         target="_blank" rel="noopener">Open it directly</a>
-    </div>
-
-    <noscript>
-      <p style="font:16px Arial;padding:2rem;text-align:center">
-        Chore Boar needs JavaScript.
-      </p>
-    </noscript>
+    <p id="hint">
+      Add this page to your Home Screen — the icon can only be made from
+      here, never from the Google page itself.
+    </p>
 
     <script>
       (function () {
         'use strict';
 
-        // The app says hello to its parent on load -- that is its token
-        // bridge handshake, and we ignore what it is asking for and use it
-        // purely as proof that something really rendered in there.
-        //
-        // We do NOT answer it. Answering is how the family wrapper hands
-        // over saved sessions; the admin's are borrowed and short-lived and
-        // have no business being kept anywhere.
-        var alive = false;
+        // Launched from the home-screen icon rather than typed into Safari.
+        // navigator.standalone is the iOS signal; the media query is the
+        // standard one everything else uses.
+        var launched =
+          window.navigator.standalone === true ||
+          (window.matchMedia &&
+           window.matchMedia('(display-mode: standalone)').matches);
 
-        function fromGoogle(origin) {
-          return origin === 'https://script.google.com' ||
-                 /^https:\/\/[a-z0-9-]+\.googleusercontent\.com$/.test(origin);
-        }
+        if (!launched) return;
 
-        window.addEventListener('message', function (e) {
-          if (!fromGoogle(e.origin) || !e.data || typeof e.data !== 'object') return;
-          if (e.data.cb) alive = true;
-        });
-
-        // A blank orange rectangle is a worse answer than a sentence saying
-        // what went wrong and a way out of it.
-        setTimeout(function () {
-          if (!alive) document.getElementById('stuck').classList.add('show');
-        }, 8000);
+        // Straight through. The icon was captured when the shortcut was
+        // made, so nothing is lost by leaving immediately -- and replace()
+        // keeps this page out of the back history.
+        document.getElementById('hint').textContent = 'Opening…';
+        window.location.replace(document.getElementById('go').href);
       })();
     </script>
   </body>
