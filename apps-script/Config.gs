@@ -15,6 +15,15 @@ var CONFIG = {
   APP_NAME: 'Chore Boar',
   TAGLINE:  'Somebody has to do it.',
 
+  // The browser-tab and home-screen icons.
+  //
+  // A web app cannot serve a static file of its own, so these are hosted on
+  // the GitHub Pages site at thechoreboar.fyi alongside the wrapper page and
+  // built by tools/build_images.py. Two of them, because both apps end up on
+  // the same phone: the family one is teal, the admin one warm amber.
+  ICON_URL:       'https://thechoreboar.fyi/icon.png',
+  ICON_URL_ADMIN: 'https://thechoreboar.fyi/icon-admin.png',
+
   // ---------------------------------------------------------------------
   // The spreadsheet behind the app
   // ---------------------------------------------------------------------

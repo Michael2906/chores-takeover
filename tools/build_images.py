@@ -54,12 +54,28 @@ def encode(path, width):
     )
 
 
-def build_icon(src_dir):
-    """Square home-screen icon for the wrapper page at thechoreboar.fyi.
+# Home-screen icons. One per app, because both end up on the same phone and
+# "which of these two identical squares is the admin one" is a bad daily
+# question to have to answer.
+#
+#   icon.png        the family app      teal
+#   icon-admin.png  the global admin    warm amber
+#
+# Both are served from GitHub Pages at thechoreboar.fyi, which is also what
+# makes them usable as a favicon URL from the Apps Script side -- a web app
+# cannot serve a static file of its own.
+ICONS = {
+    "icon.png": (46, 207, 180, 255),        # teal
+    "icon-admin.png": (245, 163, 60, 255),  # warm amber
+}
 
-    The logo is wide (roughly 2:1), so it is centred on the header's teal
-    rather than stretched. iOS does not honour transparency on a home-screen
-    icon -- it composites it onto black -- so the background is painted in.
+
+def build_icon(src_dir, filename, background):
+    """One square home-screen icon.
+
+    The logo is wide (roughly 2:1), so it is centred on a solid ground rather
+    than stretched. iOS does not honour transparency on a home-screen icon --
+    it composites it onto black -- so the background is painted in.
     """
     path = os.path.join(src_dir, ART["LOGO"][0])
     im = Image.open(path).convert("RGBA")
@@ -76,15 +92,16 @@ def build_icon(src_dir):
         w = max(1, round(im.width * h / im.height))
     im = im.resize((w, h), Image.LANCZOS)
 
-    canvas = Image.new("RGBA", (size, size), (46, 207, 180, 255))  # --quaternary
+    canvas = Image.new("RGBA", (size, size), background)
     canvas.paste(im, ((size - w) // 2, (size - h) // 2), im)
 
     out_dir = os.path.join(ROOT, "docs")
     os.makedirs(out_dir, exist_ok=True)
-    out = os.path.join(out_dir, "icon.png")
+    out = os.path.join(out_dir, filename)
     canvas.convert("RGB").save(out, format="PNG", optimize=True)
     print("%-6s %-28s %4dx%-4d  %6.1f KB"
-          % ("ICON", "docs/icon.png", size, size, os.path.getsize(out) / 1024))
+          % ("ICON", "docs/" + filename, size, size,
+             os.path.getsize(out) / 1024))
 
 
 def main():
@@ -121,7 +138,8 @@ def main():
     with io.open(out_path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write("\n".join(lines) + "\n")
 
-    build_icon(src_dir)
+    for filename, background in sorted(ICONS.items()):
+        build_icon(src_dir, filename, background)
 
     print("\nWrote %s (%.1f KB)" % (
         os.path.relpath(out_path, ROOT), os.path.getsize(out_path) / 1024))

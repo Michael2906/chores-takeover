@@ -19,6 +19,10 @@
 // ---------------------------------------------------------------------
 
 function doGet(e) {
+  // Worked out once and used three times below: which page this is, what it
+  // is called, and which icon it wears.
+  var admin = isGlobalAdmin();
+
   var template = HtmlService.createTemplateFromFile('Index');
   template.config = {
     appName:  CONFIG.APP_NAME,
@@ -31,10 +35,16 @@ function doGet(e) {
     // Decided here, server-side, from who Google says is visiting -- never
     // from the URL. See Admin.gs. On the family deployment the visitor is
     // anonymous and this is always false.
-    globalAdmin: isGlobalAdmin()
+    globalAdmin: admin
   };
   return template.evaluate()
-    .setTitle(CONFIG.APP_NAME)
+    // The title and the favicon are set on Apps Script's OWN wrapper page,
+    // which is the top-level document -- this app's HTML is inside an iframe
+    // and nothing in it can reach the browser tab or a home-screen icon.
+    // These two calls are the only lever there is, which is why the icon has
+    // to be a public URL rather than the data URI the app uses internally.
+    .setTitle(admin ? CONFIG.APP_NAME + ' admin' : CONFIG.APP_NAME)
+    .setFaviconUrl(admin ? CONFIG.ICON_URL_ADMIN : CONFIG.ICON_URL)
     .addMetaTag('viewport',
                 'width=device-width, initial-scale=1, viewport-fit=cover')
     // ALLOWALL so a masked custom domain (thechoreboar.com forwarding with

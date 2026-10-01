@@ -311,6 +311,35 @@ new password without knowing the old one, and delete a household. Deleting
 requires typing the household's name back, because there is no undo beyond
 the spreadsheet's own version history.
 
+### Its own icon
+
+Both apps end up on the same phone, so they do not get the same square. The
+family one is teal, the admin one warm amber, and the admin page's title is
+"Chore Boar admin" so the two home-screen entries are tellable apart.
+
+This is more awkward than it sounds, because **this app's HTML is inside an
+iframe** — Apps Script serves it inside its own wrapper page, and nothing in
+our document can reach the browser tab or a home-screen icon. The only lever
+is `setTitle()` and `setFaviconUrl()` on the `HtmlOutput`, which Apps Script
+applies to that outer page.
+
+`setFaviconUrl()` needs a **public URL**, and a web app cannot serve a static
+file of its own — which is why both icons live on the GitHub Pages site next
+to the wrapper, at `thechoreboar.fyi/icon.png` and `/icon-admin.png`, built
+by `tools/build_images.py`. Change the colours in its `ICONS` map, re-run it,
+and push: the icons are served by Pages, so a `clasp push` alone does not
+move them.
+
+Android reads that favicon for a home-screen icon. iOS prefers an
+`apple-touch-icon`, which has to be a `<link>` in the top-level document —
+somewhere we cannot reach on a raw `/exec` URL. If your iPhone still shows a
+screenshot instead of the boar, the fix is the same trick the family app
+already uses: a small first-party page on thechoreboar.fyi that frames the
+admin URL and carries its own icon. Worth knowing before you ask for it: the
+admin deployment is "only myself", so if the Google session has lapsed the
+frame tries to load a sign-in page that refuses to be framed, and you would
+have to open the raw URL once to get back in.
+
 ### Looking at it locally
 
 There is no `getActiveUser()` in a browser, so the preview hangs the flag off
