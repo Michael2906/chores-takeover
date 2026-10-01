@@ -107,9 +107,30 @@
   </head>
 
   <body>
+    <!--
+      THE SANDBOX IS LOAD-BEARING, and not for the usual reason.
+
+      This deployment is "only myself", so Google wants to authenticate the
+      visitor -- and its sign-in flow does that by navigating the TOP window,
+      not the frame. The result was that typing thechoreboar.fyi/admin.html
+      landed you on script.google.com a second later, which is also why Add
+      to Home Screen kept offering the Google URL and a grey letter: by the
+      time you opened the share sheet, you were not on this page any more.
+
+      Leaving allow-top-navigation OUT of the sandbox removes that power. The
+      address bar stays here no matter what the frame tries.
+
+      Everything else in the list is what the app genuinely needs, and it was
+      checked rather than guessed: an Apps Script web app renders fine under
+      exactly these flags. If sign-in cannot complete in the frame the result
+      is a frame that never reports in, which the panel below already covers.
+    -->
     <iframe id="app"
             title="Chore Boar Admin"
             allow="clipboard-write"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups
+                     allow-popups-to-escape-sandbox
+                     allow-storage-access-by-user-activation"
             src="https://script.google.com/macros/s/AKfycby-J7FGzFkGnC0dFFRWz6hpzzXrhBQfMTJfyucNhehv20m_O2_tRfkYnhXSxMpi4XpH/exec"></iframe>
 
     <!-- Visible for a moment behind the frame while it loads, and the only
@@ -124,10 +145,12 @@
     <div id="stuck">
       <h1>Could not load the admin page</h1>
       <p>
-        This usually means the Google sign-in has lapsed. Google will not let
-        its sign-in page be shown inside a frame, so it has to be opened
-        directly once — after that this page works again.
+        This usually means the Google sign-in has lapsed. Signing in has to
+        happen outside the frame, so open it directly once — then come back
+        here and it will work again.
       </p>
+      <p><strong>Coming back here matters:</strong> the home-screen icon can
+        only be made from this page, never from the Google one.</p>
       <a id="direct"
          href="https://script.google.com/macros/s/AKfycby-J7FGzFkGnC0dFFRWz6hpzzXrhBQfMTJfyucNhehv20m_O2_tRfkYnhXSxMpi4XpH/exec"
          target="_blank" rel="noopener">Open it directly</a>
