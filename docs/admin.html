@@ -21,8 +21,17 @@
       is NOT a token bridge -- the admin's sessions are borrowed, last two
       hours, and are deliberately never written to storage.
     -->
-    <link rel="icon" href="./icon-admin.png" />
-    <link rel="apple-touch-icon" href="./icon-admin.png" />
+    <!-- Absolute, sized, and versioned. Relative paths are fine here, but
+         absolute removes one thing that can be wrong; `sizes` tells iOS it
+         does not need to go looking for a better match; and the -v2 name
+         means a phone that has already cached an icon for this site has no
+         cached copy of THIS url to prefer. Bump the number if it ever
+         sticks again. -->
+    <link rel="icon" href="https://thechoreboar.fyi/icon-admin.png" />
+    <link rel="apple-touch-icon" sizes="180x180"
+          href="https://thechoreboar.fyi/icon-admin-v2.png" />
+    <link rel="apple-touch-icon-precomposed" sizes="180x180"
+          href="https://thechoreboar.fyi/icon-admin-v2.png" />
     <meta name="apple-mobile-web-app-title" content="Chore Boar Admin" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -43,7 +52,24 @@
         border: 0;
         width: 100%;
         height: 100%;
+        position: relative;
+        z-index: 1;
       }
+      #brand {
+        position: fixed;
+        inset: 0;
+        z-index: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 0.8rem;
+        font: 800 15px/1.4 Archivo, 'Segoe UI', Arial, Helvetica, sans-serif;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #14100e;
+      }
+      #brand img { border: 3px solid #14100e; }
       /* Shown only if the frame never reports in -- see below. */
       #stuck {
         display: none;
@@ -81,6 +107,15 @@
             title="Chore Boar Admin"
             allow="clipboard-write"
             src="https://script.google.com/macros/s/AKfycby-J7FGzFkGnC0dFFRWz6hpzzXrhBQfMTJfyucNhehv20m_O2_tRfkYnhXSxMpi4XpH/exec"></iframe>
+
+    <!-- Visible for a moment behind the frame while it loads, and the only
+         thing on screen if the frame is slow. Mostly it answers "am I even
+         on the right page". -->
+    <div id="brand" aria-hidden="true">
+      <img src="https://thechoreboar.fyi/icon-admin-v2.png" alt="" width="90"
+           height="90" />
+      <span>Chore Boar Admin</span>
+    </div>
 
     <div id="stuck">
       <h1>Could not load the admin page</h1>

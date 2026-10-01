@@ -64,9 +64,17 @@ def encode(path, width):
 # Both are served from GitHub Pages at thechoreboar.fyi, which is also what
 # makes them usable as a favicon URL from the Apps Script side -- a web app
 # cannot serve a static file of its own.
+# iOS caches an apple-touch-icon per URL and is famously unwilling to let go
+# of one, so the file the touch icon points at carries a version in its name.
+# Bump the number rather than overwriting, and the phone has no cached copy
+# to prefer.
+#
+# icon-admin.png stays because Config.gs hands it to setFaviconUrl(), and
+# changing that would mean another Apps Script deployment for no gain.
 ICONS = {
-    "icon.png": (46, 207, 180, 255),        # teal
-    "icon-admin.png": (245, 163, 60, 255),  # warm amber
+    "icon.png": (46, 207, 180, 255),            # teal   -- family favicon
+    "icon-admin.png": (245, 163, 60, 255),      # amber  -- admin favicon
+    "icon-admin-v2.png": (245, 163, 60, 255),   # amber  -- admin touch icon
 }
 
 
