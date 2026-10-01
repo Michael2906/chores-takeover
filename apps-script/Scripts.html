@@ -63,21 +63,33 @@
    */
   var bridge = { ready: false, win: null, origin: null };
 
-  var cache = { household: '', member: '' };
+  var cache = { household: '', member: '', admin: '' };
 
   var TOKENS = {
     get household() { return cache.household; },
     set household(v) { cache.household = v || ''; persistTokens(); },
     get member() { return cache.member; },
-    set member(v) { cache.member = v || ''; persistTokens(); }
+    set member(v) { cache.member = v || ''; persistTokens(); },
+
+    // The admin's own session, kept apart from the family pair. It never
+    // goes through the wrapper bridge -- that exists so a FAMILY device can
+    // stay signed in across visits, and an admin session has no business
+    // being handed to anything.
+    get admin() { return cache.admin; },
+    set admin(v) {
+      cache.admin = v || '';
+      try {
+        if (cache.admin) store.set('cb.adminToken', cache.admin);
+        else store.del('cb.adminToken');
+      } catch (e) { /* private mode: they sign in again */ }
+    }
   };
 
   function persistTokens() {
-    // On the admin page the tokens belong to somebody else's household and
-    // last two hours. Writing them to storage would leave a stale borrowed
-    // seat lying about on this machine, and could hand it to the family app
-    // if the two deployments ever share an origin.
-    if (window.CONFIG_CLIENT && CONFIG_CLIENT.globalAdmin) return;
+    // In admin mode the household pair is a BORROWED seat that lasts two
+    // hours. Writing it to storage, or handing it to the wrapper bridge,
+    // would leave somebody else's household lying around on this machine.
+    if (window.CONFIG_CLIENT && CONFIG_CLIENT.adminMode) return;
 
     if (bridge.ready) {
       bridge.win.postMessage({
@@ -109,6 +121,10 @@
    * once, so a silent wrapper delays start-up rather than hanging it.
    */
   function loadTokens(done) {
+    // Read before anything else: boot() needs it to decide between the
+    // admin gate and the admin list.
+    cache.admin = store.get('cb.adminToken') || '';
+
     function fromStore() {
       cache.household = store.get('cb.householdToken') || '';
       cache.member = store.get('cb.memberToken') || '';
@@ -185,6 +201,7 @@
     var body = payload || {};
     body.householdToken = TOKENS.household;
     body.memberToken = TOKENS.member;
+    body.adminToken = TOKENS.admin;
 
     setBusy(1);
     var done = function () { setBusy(-1); };
@@ -303,7 +320,8 @@
   // -----------------------------------------------------------------
 
   function show(which) {
-    ['splash', 'gate', 'picker', 'admin', 'app'].forEach(function (id) {
+    ['splash', 'gate', 'picker', 'adminauth', 'admin', 'app']
+      .forEach(function (id) {
       $(id).hidden = (id !== which);
     });
   }
@@ -313,7 +331,11 @@
     // The admin page is its own front door. It never resumes a remembered
     // session, because the whole point is to start from "which household?"
     // -- and because its tokens are borrowed, not the device's own.
-    if (CONFIG_CLIENT.globalAdmin && !state.admin.on) { adminHome(); return; }
+    if (CONFIG_CLIENT.adminMode && !state.admin.on) {
+      if (!TOKENS.admin) { showAdminGate(); return; }
+      adminHome();
+      return;
+    }
 
     show('splash');
     api('resumeSession', {})
@@ -619,24 +641,99 @@
   // subtly wrong. The only addition is the bar across the top saying whose
   // seat this is, and how to give it back.
 
+  /** The password form. Shown whenever there is no live admin session. */
+  function showAdminGate(message) {
+    $('admin-setup-hint').hidden = !!CONFIG_CLIENT.adminConfigured;
+    var err = $('admin-error');
+    if (message) { err.textContent = message; err.hidden = false; }
+    else { err.hidden = true; }
+    show('adminauth');
+    var f = $('form-admin');
+    if (f) { f.password.value = ''; f.password.focus(); }
+  }
+
+  function wireAdminGate() {
+    var f = $('form-admin');
+    if (!f) return;
+
+    f.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var btn = f.querySelector('button[type=submit]');
+      busy(btn, true);
+      $('admin-error').hidden = true;
+
+      api('adminSignIn', {
+        password: f.password.value,
+        deviceLabel: deviceLabel()
+      }).then(function (data) {
+        TOKENS.admin = data.adminToken;
+        adminHome();
+      }).catch(function (err) {
+        showAdminGate(err.message);
+      }).then(function () { busy(btn, false); });
+    });
+  }
+
   function adminHome() {
     show('splash');
     api('adminOverview', {}).then(function (data) {
       renderAdmin(data);
       show('admin');
     }).catch(function (err) {
-      // The flag said admin and the server disagrees -- the deployment is
-      // not the one that authenticates, or ADMIN_EMAIL was never stored.
-      show('gate');
-      toast(err.message === 'NOT_ADMIN'
-        ? 'This page is not signed in as the admin.'
-        : err.message, 'bad');
+      // The session lapsed, or there never was one. Back to the password.
+      if (err.message === 'NOT_ADMIN') {
+        TOKENS.admin = '';
+        showAdminGate();
+        return;
+      }
+      showAdminGate(err.message);
     });
   }
 
-  function renderAdmin(data) {
-    $('admin-who').textContent = data.admin || '';
+  function wireAdminScreen() {
+    var out = $('admin-signout');
+    if (out) {
+      out.addEventListener('click', function () {
+        api('adminSignOut', {}).then(function () {
+          TOKENS.admin = '';
+          TOKENS.household = '';
+          TOKENS.member = '';
+          state.admin.on = false;
+          showAdminGate();
+        }).catch(fail);
+      });
+    }
 
+    var pw = $('admin-password');
+    if (pw) pw.addEventListener('click', adminPasswordForm);
+  }
+
+  function adminPasswordForm() {
+    openModal('Change the admin password',
+      '<p class="form-hint" style="text-align:left">Every admin session, ' +
+      'including this one, is signed out afterwards.</p>' +
+      '<form class="form" id="adm-newpw">' +
+        '<label class="field"><span>New admin password</span>' +
+          '<input type="password" name="pw" autocomplete="new-password" ' +
+                 'minlength="10" />' +
+          '<small>At least 10 characters.</small></label>' +
+      '</form>',
+      [
+        { label: 'Cancel', kind: 'btn-secondary', act: closeModal },
+        { label: 'Change it', kind: 'btn-primary', act: function (btn) {
+            busy(btn, true);
+            api('changeAdminPassword', { newPassword: $('adm-newpw').pw.value })
+              .then(function () {
+                TOKENS.admin = '';
+                closeModal();
+                showAdminGate('Password changed. Sign in again.');
+              })
+              .catch(fail).then(function () { busy(btn, false); });
+          } }
+      ]);
+  }
+
+  function renderAdmin(data) {
     $('admin-list').innerHTML = data.households.length
       ? '<div class="list-rows">' + data.households.map(function (h) {
           var tags = [
@@ -724,6 +821,8 @@
 
   function adminLeave() {
     api('adminLeaveHousehold', {}).then(function () {
+      // The household pair goes; the admin session stays.
+
       TOKENS.household = '';
       TOKENS.member = '';
       state.admin.on = false;
@@ -3378,7 +3477,7 @@
   // -----------------------------------------------------------------
 
   function paintArt() {
-    ['splash-logo', 'gate-logo', 'header-logo'].forEach(function (id) {
+    ['splash-logo', 'gate-logo', 'adminauth-logo', 'header-logo'].forEach(function (id) {
       var el = $(id);
       if (el && typeof ART !== 'undefined' && ART.LOGO) {
         el.style.backgroundImage = 'url("' + ART.LOGO + '")';
@@ -3394,6 +3493,8 @@
 
     var leave = $('admin-leave');
     if (leave) leave.addEventListener('click', adminLeave);
+    wireAdminGate();
+    wireAdminScreen();
 
     // Tokens first: boot() decides which screen to show from them, so asking
     // the wrapper afterwards would flash the sign-in form at somebody who is

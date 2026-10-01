@@ -401,19 +401,21 @@
   // Deployed, this is Session.getActiveUser() checked against a stored
   // ADMIN_EMAIL. There is no such thing in a browser, so the preview simply
   // believes the page: preview.html#admin is the admin.
-  function adminHere() {
-    return typeof CONFIG_CLIENT !== 'undefined' && !!CONFIG_CLIENT.globalAdmin;
+  // Deployed, the gate is a password of ours exchanged for a session token.
+  // The preview keeps the same shape -- sign in, get a token, send it with
+  // every call -- so the client path under test is the shipping one.
+  var MOCK_ADMIN_PASSWORD = 'adminpass123';
+  var adminTokens = {};
+
+  function requireAdmin(p) {
+    if (!p || !adminTokens[p.adminToken]) throw new Error('NOT_ADMIN');
+    return 'admin';
   }
 
-  function requireAdmin() {
-    if (!adminHere()) throw new Error('NOT_ADMIN');
-    return 'you@example.com';
-  }
-
-  function overview() {
-    requireAdmin();
+  function overview(p) {
+    requireAdmin(p);
     return {
-      admin: 'you@example.com',
+      admin: 'Global admin',
       today: today(),
       households: DB.households.map(function (h) {
         var people = DB.members.filter(function (m) {
@@ -609,10 +611,37 @@
       return { ok: true };
     },
 
-    adminOverview: function () { return overview(); },
+    adminSignIn: function (p) {
+      if (String(p.password || '') !== MOCK_ADMIN_PASSWORD) {
+        throw new Error('That is not the admin password.');
+      }
+      var t = id('adm');
+      adminTokens[t] = true;
+      return { adminToken: t };
+    },
+
+    adminSignOut: function (p) {
+      delete adminTokens[p.adminToken];
+      DB.sessions = DB.sessions.filter(function (s) {
+        return s.token !== p.householdToken && s.token !== p.memberToken;
+      });
+      return { ok: true };
+    },
+
+    changeAdminPassword: function (p) {
+      requireAdmin(p);
+      if (String(p.newPassword || '').length < 10) {
+        throw new Error('Use an admin password of at least 10 characters.');
+      }
+      MOCK_ADMIN_PASSWORD = String(p.newPassword);
+      adminTokens = {};
+      return { ok: true };
+    },
+
+    adminOverview: function (p) { return overview(p); },
 
     adminActivityLog: function (p) {
-      requireAdmin();
+      requireAdmin(p);
       return { entries: [
         { at: now(), who: 'The system', action: 'daily_fill',
           detail: today() + ': 14 chores' },
@@ -621,7 +650,7 @@
     },
 
     adminEnterHousehold: function (p) {
-      requireAdmin();
+      requireAdmin(p);
       var h = find(DB.households, 'householdId', String(p.householdId || ''));
       if (!h) throw new Error('No such household.');
       var owner = DB.members.filter(function (m) {
@@ -638,7 +667,7 @@
     },
 
     adminLeaveHousehold: function (p) {
-      requireAdmin();
+      requireAdmin(p);
       DB.sessions = DB.sessions.filter(function (s) {
         return s.token !== p.householdToken && s.token !== p.memberToken;
       });
@@ -646,7 +675,7 @@
     },
 
     adminResetPassword: function (p) {
-      requireAdmin();
+      requireAdmin(p);
       var h = find(DB.households, 'householdId', String(p.householdId || ''));
       if (!h) throw new Error('No such household.');
       if (String(p.newPassword || '').length < 8) {
@@ -657,30 +686,30 @@
       DB.sessions = DB.sessions.filter(function (s) {
         return s.householdId !== h.householdId;
       });
-      return overview();
+      return overview(p);
     },
 
     adminUnlockHousehold: function (p) {
-      requireAdmin();
+      requireAdmin(p);
       var h = find(DB.households, 'householdId', String(p.householdId || ''));
       if (!h) throw new Error('No such household.');
       h.locked = false;
-      return overview();
+      return overview(p);
     },
 
     adminFillHousehold: function (p) {
-      requireAdmin();
+      requireAdmin(p);
       var h = find(DB.households, 'householdId', String(p.householdId || ''));
       if (!h) throw new Error('No such household.');
       if (h.lastFilledOn === today()) {
-        return { alreadyDone: true, written: 0, overview: overview() };
+        return { alreadyDone: true, written: 0, overview: overview(p) };
       }
       var res = window.MOCK_NIGHTLY();
-      return { alreadyDone: false, written: res.filled || 0, overview: overview() };
+      return { alreadyDone: false, written: res.filled || 0, overview: overview(p) };
     },
 
     adminDeleteHousehold: function (p) {
-      requireAdmin();
+      requireAdmin(p);
       var h = find(DB.households, 'householdId', String(p.householdId || ''));
       if (!h) throw new Error('No such household.');
       if (String(p.confirmName || '').trim() !== String(h.name).trim()) {
@@ -695,7 +724,7 @@
       DB.households = DB.households.filter(function (x) {
         return x.householdId !== h.householdId;
       });
-      return overview();
+      return overview(p);
     },
 
     loadGroups: function (p) {

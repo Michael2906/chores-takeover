@@ -19,9 +19,11 @@
 // ---------------------------------------------------------------------
 
 function doGet(e) {
-  // Worked out once and used three times below: which page this is, what it
-  // is called, and which icon it wears.
-  var admin = isGlobalAdmin();
+  // Which of the two faces to serve. This is NOT a gate -- all ?admin=1 does
+  // is draw the password form. Nothing behind it answers without a live
+  // admin session token. See Admin.gs for why the gate is a password of
+  // ours rather than Google's sign-in.
+  var admin = !!(e && e.parameter && e.parameter.admin === '1');
 
   var template = HtmlService.createTemplateFromFile('Index');
   template.config = {
@@ -35,7 +37,8 @@ function doGet(e) {
     // Decided here, server-side, from who Google says is visiting -- never
     // from the URL. See Admin.gs. On the family deployment the visitor is
     // anonymous and this is always false.
-    globalAdmin: admin
+    adminMode: admin,
+    adminConfigured: admin ? adminIsConfigured() : false
   };
   return template.evaluate()
     // The title and the favicon are set on Apps Script's OWN wrapper page,
@@ -124,6 +127,9 @@ function actions() {
 
     // The global admin page. Every one of these re-checks who is asking;
     // being in this list is not permission, it is only reachability.
+    adminSignIn:          adminSignIn,
+    adminSignOut:         adminSignOut,
+    changeAdminPassword:  changeAdminPassword,
     adminOverview:        adminOverview,
     adminActivityLog:     adminActivityLog,
     adminEnterHousehold:  adminEnterHousehold,

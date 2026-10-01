@@ -9,43 +9,22 @@
     <meta name="description" content="Every household at once." />
 
     <!--
-      ===================================================================
-      This page exists for ONE reason: to own the home-screen icon.
-      ===================================================================
+      The admin app, framed so Google's header and footer do not show, with
+      an icon of its own.
 
-      iOS reads apple-touch-icon from the TOP-LEVEL document. Added straight
-      from the /exec URL that document is Google's own wrapper page, which we
-      cannot put a tag in -- so the icon came out as a grey letter.
+      It frames the FAMILY deployment with ?admin=1 rather than a second
+      deployment. That is the whole reason this works now: a deployment set
+      to "only myself" cannot be framed from here, because Safari hides its
+      cookies from a third-party frame -- so Google demanded a sign-in and
+      navigated the top window out of the frame to do it. An anonymous
+      deployment frames fine, and the admin page behind ?admin=1 carries its
+      own password instead. See Admin.gs.
 
-      WHAT THIS PAGE DOES NOT DO, AND WHY.
+      ?admin=1 is not a secret and not a gate. All it does is draw the
+      password form.
 
-      It does not frame the admin app. That was tried two ways and both
-      failed for the same underlying reason: the admin deployment is "only
-      myself", so Google has to authenticate the visitor, and its sign-in
-      flow navigates the TOP window rather than the frame.
-
-        - Framed plainly, the sign-in dragged the whole tab to
-          script.google.com a second after load. Add to Home Screen then
-          offered the Google URL and a grey letter, because by the time the
-          share sheet opened you were not on this page any more.
-
-        - Framed in a sandbox without allow-top-navigation, the tab stayed
-          put but the sign-in callback had nowhere to land, and Google
-          answered "the server cannot process the request because it is
-          malformed".
-
-      An authenticated web app does not belong in somebody else's iframe. So
-      this is a launcher instead, which pushes the awkwardness somewhere it
-      costs nothing:
-
-        OPENED IN A SAFARI TAB   it stays here and shows a button. Nothing
-                                 can redirect out from under you, so Add to
-                                 Home Screen always captures THIS url and
-                                 this icon.
-
-        OPENED FROM THE ICON     it goes straight through to the app. The
-                                 icon was baked in when the shortcut was
-                                 made, so the jump costs nothing.
+      Unlike index.html this is NOT a token bridge: the admin session and any
+      borrowed household seat are deliberately kept off this origin.
     -->
     <link rel="icon" href="https://thechoreboar.fyi/icon-admin.png" />
     <link rel="apple-touch-icon" sizes="180x180"
@@ -54,87 +33,39 @@
           href="https://thechoreboar.fyi/icon-admin-v2.png" />
     <link rel="manifest" href="/admin.webmanifest" />
     <meta name="apple-mobile-web-app-title" content="Chore Boar Admin" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
 
     <!-- An admin console has no business in a search index. -->
     <meta name="robots" content="noindex, nofollow" />
 
     <style>
-      html, body { margin: 0; padding: 0; }
-      body {
-        background: #f5a33c;
-        color: #14100e;
-        font: 16px/1.5 Archivo, 'Segoe UI', Arial, Helvetica, sans-serif;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        gap: 1.25rem;
-        min-height: 100vh;
-        min-height: 100dvh;
-        padding: 2rem 1.5rem;
-        box-sizing: border-box;
-        text-align: center;
-      }
-      img { border: 3px solid #14100e; box-shadow: 6px 6px 0 #14100e; }
-      h1 {
+      html, body {
         margin: 0;
-        font-size: 1.1rem;
-        font-weight: 800;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
+        padding: 0;
+        height: 100%;
+        background: #f5a33c;
+        overflow: hidden;
       }
-      a {
-        display: inline-block;
-        background: #fffdf7;
-        color: #14100e;
-        border: 3px solid #14100e;
-        box-shadow: 6px 6px 0 #14100e;
-        padding: 0.75rem 1.4rem;
-        font-weight: 800;
-        text-transform: uppercase;
-        letter-spacing: 0.03em;
-        text-decoration: none;
+      iframe {
+        display: block;
+        border: 0;
+        width: 100%;
+        height: 100%;
       }
-      a:active { transform: translate(6px, 6px); box-shadow: none; }
-      p { margin: 0; max-width: 24rem; font-size: 0.85rem; }
     </style>
   </head>
 
   <body>
-    <img src="https://thechoreboar.fyi/icon-admin-v2.png" alt=""
-         width="110" height="110" />
-    <h1>Chore Boar Admin</h1>
+    <iframe id="app"
+            title="Chore Boar Admin"
+            allow="clipboard-write"
+            src="https://script.google.com/macros/s/AKfycbwO_tiMhOD7_LVi66_XZSDgm9bodOnso_EvB_fskJQoPkJattag_dMozAnvQi4_8nOB/exec?admin=1"></iframe>
 
-    <a id="go"
-       href="https://script.google.com/macros/s/AKfycby-J7FGzFkGnC0dFFRWz6hpzzXrhBQfMTJfyucNhehv20m_O2_tRfkYnhXSxMpi4XpH/exec">
-      Open the admin page
-    </a>
-
-    <p id="hint">
-      Add this page to your Home Screen — the icon can only be made from
-      here, never from the Google page itself.
-    </p>
-
-    <script>
-      (function () {
-        'use strict';
-
-        // Launched from the home-screen icon rather than typed into Safari.
-        // navigator.standalone is the iOS signal; the media query is the
-        // standard one everything else uses.
-        var launched =
-          window.navigator.standalone === true ||
-          (window.matchMedia &&
-           window.matchMedia('(display-mode: standalone)').matches);
-
-        if (!launched) return;
-
-        // Straight through. The icon was captured when the shortcut was
-        // made, so nothing is lost by leaving immediately -- and replace()
-        // keeps this page out of the back history.
-        document.getElementById('hint').textContent = 'Opening…';
-        window.location.replace(document.getElementById('go').href);
-      })();
-    </script>
+    <noscript>
+      <p style="font:16px Arial;padding:2rem;text-align:center">
+        Chore Boar needs JavaScript.
+      </p>
+    </noscript>
   </body>
 </html>

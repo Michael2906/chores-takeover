@@ -224,57 +224,52 @@ bridge carried them.
 
 ## The global admin page
 
-One person — whoever owns the script — can see every household in the
-spreadsheet and step into any of them.
+One password gets you a list of every household in the spreadsheet, and lets
+you step into any of them.
 
-### Why it is a second deployment
+### Why it has its own password rather than Google sign-in
 
-The family app has to be **Execute as: me, Access: anyone**, because the
-children have no Google accounts and must never need one. A deployment with
-anonymous access cannot tell you who is visiting, so it can never be trusted
-to authorise an admin.
+It started as a second deployment set to "only myself", gated on
+`Session.getActiveUser()`. That is a stronger gate and it had to go, for a
+reason that only shows up once you hit it.
 
-So the admin page is a **second web-app deployment of the same project**,
-configured the other way round. Google then authenticates the visitor and
-`Session.getActiveUser()` is real.
+An Apps Script web app shows **Google's own header and footer** unless it is
+framed. Framing it from thechoreboar.fyi makes it a third-party frame, and
+Safari will not let a third-party frame see its own cookies — so Google
+could not see the signed-in session, demanded a sign-in, and did that by
+navigating the **top window** straight out of the frame. Sandboxing the
+frame to stop that only moved the failure: the sign-in callback had nowhere
+to land and Google answered "the server cannot process the request because
+it is malformed".
 
-The gate is an **identity check, not a URL check**:
+**"Authenticated by Google" and "framed on your own domain" cannot both be
+true in Safari.** Picking framing means picking our own gate.
 
-```js
-Session.getActiveUser().getEmail() === the stored ADMIN_EMAIL
-```
+So the admin page is served from the **family deployment** — anonymous
+access, so it frames cleanly with no Google chrome and its own icon — and it
+is protected by a password held exactly the way every household password
+already is: hashed with a per-row salt plus `PEPPER`, which lives in script
+properties and not in the spreadsheet. Six wrong tries freezes it for
+fifteen minutes. One deployment now, so a release is one version bump.
 
-which means it does not matter which of the two URLs is loaded. On the
-family deployment the active user is anonymous, so the check simply fails.
-
-There is deliberately **no fallback to `getEffectiveUser()`**. On a
-deployment that runs as the accessing user that *is* the visitor, so a
-fallback would quietly make everybody an admin the day a setting changed.
-With no `ADMIN_EMAIL` stored, global admin is off entirely.
+`?admin=1` picks the admin face. It is **not a secret and not a gate** — all
+it does is draw the password form. Nothing behind it answers without a live
+admin session token, which lasts twelve hours.
 
 ### Turning it on
 
-1. Push the code, then in the editor run **`setUpAdmin()`** once. It reads
-   your email from the account running it and stores it in script
-   properties. It is not in the `actions()` allow-list, so the browser can
-   never call it.
+Run **`setUpAdmin()`** once from the editor. It invents the password rather
+than taking one — a generated password is stronger than one typed in a
+hurry, and nothing secret ends up pasted into the editor or committed. It
+prints it **once**; copy it there and then.
 
-   You will be asked to re-authorise: the manifest now also requests
-   `userinfo.email`, which is what `getActiveUser()` reads. Without that
-   scope the gate silently never passes, which is a miserable thing to debug.
+Run it again to roll the password, or change it from inside the admin page.
+`turnOffAdmin()` removes it and ends every admin session.
 
-2. **Deploy > New deployment > Web app**, with settings that are *not* the
-   family app's:
-
-   | | |
-   | --- | --- |
-   | Execute as | **User accessing the web app** |
-   | Who has access | **Only myself** |
-
-   That URL is your admin page. The family app keeps its own URL and its own
-   settings — leave those alone.
-
-`turnOffAdmin()` clears the stored email and shuts the whole thing off.
+Then open **thechoreboar.fyi/admin.html**, which frames the app at
+`?admin=1` and carries the amber home-screen icon. Add *that* page to a home
+screen — never the `/exec` URL, which is Google's document and cannot carry
+an icon of ours.
 
 ### What it does
 
@@ -289,74 +284,41 @@ do everything that household's own account holder can: add people, create
 chores, edit the Trough and the Sty, manage groups, move points, approve
 work, stock the Prize Pen.
 
-A violet bar across the top says whose seat you are in, and **Leave this
-household** gives it back. While you are in there, "Switch person" and "Sign
-this device out" are hidden — both ask for the household password, which is
-exactly the thing an admin does not have.
+A violet bar says whose seat you are in, and **Leave this household** gives
+it back. While you are in there, "Switch person" and "Sign this device out"
+are hidden — both ask for the household password, which an admin does not
+have.
 
-Two things keep the borrowing honest:
+Three things keep the borrowing honest: the tokens last **two hours**, not
+the sixty days a real device gets; entering and leaving are both written to
+that household's activity log; and the borrowed pair is never written to
+browser storage, so it cannot be left lying about on the machine.
 
-- the tokens last **two hours**, not the sixty days a real device gets, so a
-  forgotten tab is not a permanent back door;
-- entering and leaving are both written to that household's activity log,
-  with the admin's email.
-
-The borrowed tokens are also never written to browser storage, so they
-cannot be left lying about on the machine.
-
-**More…** holds the things that are the admin's rather than the household's:
-read the activity log, run tonight's hand-out early (through the same lock
-as the nightly job, so it cannot double anybody up), clear a lockout, set a
-new password without knowing the old one, and delete a household. Deleting
+**More…** holds what is the admin's rather than the household's: read the
+activity log, run tonight's hand-out early (through the same lock as the
+nightly job, so it cannot double anybody up), clear a lockout, set a new
+password without knowing the old one, and delete a household. Deleting
 requires typing the household's name back, because there is no undo beyond
 the spreadsheet's own version history.
 
 ### Its own icon
 
 Both apps end up on the same phone, so they do not get the same square. The
-family one is teal, the admin one warm amber, and the admin page's title is
-"Chore Boar admin" so the two home-screen entries are tellable apart.
+family one is teal, the admin one warm amber.
 
-This is more awkward than it sounds, because **this app's HTML is inside an
-iframe** — Apps Script serves it inside its own wrapper page, and nothing in
-our document can reach the browser tab or a home-screen icon. The only lever
-is `setTitle()` and `setFaviconUrl()` on the `HtmlOutput`, which Apps Script
-applies to that outer page.
-
-`setFaviconUrl()` needs a **public URL**, and a web app cannot serve a static
-file of its own — which is why both icons live on the GitHub Pages site next
-to the wrapper, at `thechoreboar.fyi/icon.png` and `/icon-admin.png`, built
-by `tools/build_images.py`. Change the colours in its `ICONS` map, re-run it,
-and push: the icons are served by Pages, so a `clasp push` alone does not
-move them.
-
-Android reads that favicon for a home-screen icon. **iOS does not** — it
-wants an `apple-touch-icon`, which has to be a `<link>` in the top-level
-document, and on a raw `/exec` URL that document is Google's. Added from
-there, the admin app came out as a grey letter.
-
-So there is a second wrapper, `docs/admin.html`, served at
-**thechoreboar.fyi/admin.html**. Add the admin app to a home screen *from
-that URL* rather than the `/exec` one. Unlike the family wrapper it is not a
-token bridge — the admin's sessions are borrowed, last two hours and are
-never written to storage — it exists purely to own the icon.
-
-It has one failure mode worth knowing. The admin deployment is "only
-myself", so when the Google session lapses the frame tries to load a sign-in
-page, and Google refuses to be framed. The app announces itself to its
-parent on load, so the wrapper uses that as proof something rendered: if
-nothing reports in within eight seconds it replaces the blank frame with a
-sentence explaining this and a button that opens the `/exec` URL directly.
-Signing in there once makes the wrapper work again.
+This is more awkward than it sounds. iOS reads `apple-touch-icon` from the
+**top-level document**, and on an `/exec` URL that document is Google's.
+Added from there, the admin app came out as a grey letter. `setFaviconUrl()`
+reaches the browser tab and is enough for Android; iOS needs the tag, and
+the tag has to live on a page we serve — which is `docs/admin.html`. Both
+icons are built by `tools/build_images.py` and served from GitHub Pages, so
+they ship with a **git** push, not a clasp push.
 
 ### Looking at it locally
 
-There is no `getActiveUser()` in a browser, so the preview hangs the flag off
-the URL instead:
-
 ```
-build/preview.html          the family app
-build/preview.html#admin    the admin page
+build/preview.html            the family app
+build/preview.html?admin=1    the admin page   (demo password: adminpass123)
 ```
 
 ---

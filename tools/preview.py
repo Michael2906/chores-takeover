@@ -63,11 +63,12 @@ def config_values():
         "pinLength": grab("PIN_LENGTH", "4"),
         "minPassword": grab("MIN_PASSWORD", "8"),
         "wrapperOrigins": origins,
-        # Deployed, this comes from Session.getActiveUser(). There is no
-        # such thing locally, so the preview hangs it off the URL:
-        # preview.html#admin is the admin page, preview.html is the family
-        # app. Substituted as an EXPRESSION, not a value.
-        "globalAdmin": "(location.hash.indexOf('admin') >= 0)",
+        # Deployed these come from doGet: ?admin=1 picks the admin face,
+        # and adminConfigured says whether a password has been set. The
+        # preview reads the same query parameter, so the URL works the same
+        # way: preview.html?admin=1. Substituted as EXPRESSIONS, not values.
+        "adminMode": "(location.search.indexOf('admin=1') >= 0)",
+        "adminConfigured": "true",
     }
 
 

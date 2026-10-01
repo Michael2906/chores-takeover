@@ -123,6 +123,36 @@
     </section>
 
     <!-- ============================================================
+         Screen 2a: the admin gate.
+
+         Drawn whenever the page was asked for with ?admin=1. Showing it
+         proves nothing and grants nothing -- the token it exchanges the
+         password for is what every admin action is checked against.
+         ============================================================ -->
+    <section id="adminauth" class="screen" hidden>
+      <div class="card gate-card">
+        <div class="gate-mark" id="adminauth-logo"></div>
+        <p class="gate-tagline">Global admin</p>
+
+        <form id="form-admin" class="form" autocomplete="on">
+          <label class="field">
+            <span>Admin password</span>
+            <input type="password" name="password"
+                   autocomplete="current-password" required />
+          </label>
+          <p class="form-error" id="admin-error" role="alert" hidden></p>
+          <button type="submit" class="btn btn-primary btn-block">
+            Sign in
+          </button>
+          <p class="form-hint" id="admin-setup-hint" hidden>
+            No admin password has been set yet. Run <strong>setUpAdmin()</strong>
+            once from the Apps Script editor; it prints one.
+          </p>
+        </form>
+      </div>
+    </section>
+
+    <!-- ============================================================
          Screen 2b: the global admin page -- every household at once.
 
          Only ever shown when the server said this visitor is the admin;
@@ -132,7 +162,14 @@
       <div class="card admin-card">
         <div class="picker-head">
           <h1>Global admin</h1>
-          <span class="admin-who" id="admin-who"></span>
+          <span class="row-acts">
+            <button class="btn btn-sm btn-secondary" id="admin-password">
+              Change password
+            </button>
+            <button class="btn btn-sm btn-quiet" id="admin-signout">
+              Sign out
+            </button>
+          </span>
         </div>
         <div id="admin-list"></div>
       </div>
@@ -246,7 +283,8 @@
         wrapperOrigins: <?!= JSON.stringify(config.wrapperOrigins) ?>,
         troughName: <?!= JSON.stringify(config.troughName) ?>,
         storeName: <?!= JSON.stringify(config.storeName) ?>,
-        globalAdmin: <?!= JSON.stringify(!!config.globalAdmin) ?>
+        adminMode: <?!= JSON.stringify(!!config.adminMode) ?>,
+        adminConfigured: <?!= JSON.stringify(!!config.adminConfigured) ?>
       };
     </script>
     <?!= include('Scripts'); ?>

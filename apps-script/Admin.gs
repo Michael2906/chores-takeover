@@ -1,34 +1,39 @@
 /**
  * Chore Boar -- the global admin page.
  *
- * One person -- whoever owns this script -- can see every household in the
- * spreadsheet, and can step INTO any of them and do everything that
- * household's own account holder can do.
+ * One person can see every household in the spreadsheet and step INTO any of
+ * them, doing everything that household's own account holder can do.
  *
  * ---------------------------------------------------------------------
- * How it is reached, and why that is the gate
+ * Why this has its own password instead of using Google sign-in
  * ---------------------------------------------------------------------
  *
- * The family app has to be deployed "Execute as: me, Access: anyone",
- * because the children have no Google accounts and must not need one. That
- * deployment can therefore never be trusted to say who is visiting.
+ * It used to be a second deployment set to "only myself", with the gate
+ * being Session.getActiveUser(). That is a stronger gate and it had to go,
+ * for a reason that is not obvious until you hit it:
  *
- * So the admin page is a SECOND web-app deployment of this same project,
- * configured "Execute as: user accessing, Access: Only myself". Google then
- * authenticates the visitor for us and Session.getActiveUser() is real.
+ * An Apps Script web app shows Google's own header and footer unless it is
+ * framed. Framing it from thechoreboar.fyi makes it a THIRD-PARTY frame, and
+ * Safari does not let a third-party frame see its own cookies -- so Google
+ * could not see the signed-in session, demanded a sign-in, and did that by
+ * navigating the top window straight out of the frame. Sandboxing the frame
+ * to stop that just moved the failure: the sign-in callback had nowhere to
+ * land and Google answered "malformed request".
  *
- * The gate is an IDENTITY check, not a URL check:
+ * "Authenticated by Google" and "framed on our own domain" cannot both be
+ * true on Safari. The admin page is served from the FAMILY deployment now --
+ * anonymous access, so it frames cleanly, no Google chrome, its own icon --
+ * and it is protected by a password of ours instead.
  *
- *     Session.getActiveUser().getEmail() === the stored ADMIN_EMAIL
+ * That password is held exactly the way every household password already is:
+ * hashed with a per-row salt plus PEPPER, which lives in script properties
+ * and not in the spreadsheet. Wrong guesses lock the gate for a while. Being
+ * served from the family deployment also means ONE deployment to keep
+ * current rather than two.
  *
- * which means it does not matter which of the two URLs anybody loads. On the
- * public deployment the active user is anonymous and the check simply fails.
- * There is deliberately NO fallback to Session.getEffectiveUser(): on a
- * deployment that runs as the accessing user that is the visitor, so a
- * fallback would quietly make every visitor an admin the day a deployment
- * setting changed. With no ADMIN_EMAIL stored, global admin is OFF.
- *
- * Run setUpAdmin() once from the editor to store it.
+ * The page is requested with ?admin=1, which is not a secret and not a gate:
+ * all it does is draw the password form. Nothing behind it answers without a
+ * live admin session token.
  *
  * ---------------------------------------------------------------------
  * Stepping into a household
@@ -36,93 +41,192 @@
  *
  * Rather than rebuild every screen a second time, entering a household MINTS
  * ORDINARY SESSIONS for that household's account holder and hands them to
- * the browser. The whole normal interface then works, unchanged, because as
- * far as every other function is concerned this is simply that person signed
- * in -- which is also why nothing here needs a second set of permission
- * rules to get subtly wrong.
+ * the browser. The whole normal interface then works, unchanged -- which is
+ * also why nothing here needs a second set of permission rules to get subtly
+ * wrong.
  *
- * Two things keep that honest:
- *
- *   - the sessions are short (ADMIN_IMPERSONATION_HOURS), not the 60 days a
- *     real device gets, so a forgotten tab is not a permanent back door;
- *   - every entry and exit is written to the activity log, under the
- *     household being entered.
+ * Two things keep that honest: the sessions are short, and every entry and
+ * exit is written to the activity log of the household being entered.
  */
 
-/** How long an admin's borrowed session lasts. */
+/** How long an admin's borrowed household session lasts. */
 var ADMIN_IMPERSONATION_HOURS = 2;
+
+/** How long a signed-in admin stays signed in on a device. */
+var ADMIN_SESSION_HOURS = 12;
+
+/** Wrong admin passwords allowed before the gate freezes. */
+var ADMIN_MAX_ATTEMPTS = 6;
+var ADMIN_LOCKOUT_MINUTES = 15;
 
 // ---------------------------------------------------------------------
 // The gate
 // ---------------------------------------------------------------------
 
-/** The one email allowed, or '' when global admin has never been set up. */
-function adminEmailAddress() {
-  var v = PropertiesService.getScriptProperties().getProperty('ADMIN_EMAIL');
-  return String(v || '').trim().toLowerCase();
+/**
+ * Run this ONCE from the editor to turn global admin on.
+ *
+ * It invents the password rather than taking one, for two reasons: a
+ * generated one is stronger than anything typed in a hurry, and nothing
+ * secret ends up pasted into the editor or committed. It is printed exactly
+ * once -- copy it there and then. Run it again to roll it.
+ */
+function setUpAdmin() {
+  var password = randomToken(15).replace(/[^A-Za-z0-9]/g, '').slice(0, 20);
+  var salt = randomToken(16);
+
+  PropertiesService.getScriptProperties().setProperties({
+    ADMIN_PASSWORD_HASH: hashSecret(password, salt),
+    ADMIN_PASSWORD_SALT: salt,
+    ADMIN_FAILED: '0',
+    ADMIN_LOCKED_UNTIL: ''
+  });
+
+  console.log('Global admin is ON. The password is:');
+  console.log('');
+  console.log('    ' + password);
+  console.log('');
+  console.log('Copy it now -- it is hashed, so this is the only time it can');
+  console.log('be shown. Run setUpAdmin() again to roll it, or change it');
+  console.log('from inside the admin page once you are in.');
+  console.log('');
+  console.log('The admin page is your normal app URL with ?admin=1, and');
+  console.log('thechoreboar.fyi/admin.html frames it for you.');
+  return 'see the log';
 }
 
-/** Who Google says is visiting. '' for anonymous. */
-function visitorEmail() {
-  try {
-    return String(Session.getActiveUser().getEmail() || '').trim().toLowerCase();
-  } catch (err) {
-    // Thrown rather than returned when the deployment has no right to ask.
-    return '';
-  }
+/** Turns it off. Nobody passes the gate afterwards. */
+function turnOffAdmin() {
+  var props = PropertiesService.getScriptProperties();
+  ['ADMIN_PASSWORD_HASH', 'ADMIN_PASSWORD_SALT',
+   'ADMIN_FAILED', 'ADMIN_LOCKED_UNTIL'].forEach(function (k) {
+    props.deleteProperty(k);
+  });
+  adminEndAllSessions();
+  console.log('Global admin is off.');
 }
 
-/** True only for the stored admin, and only when one has been stored. */
-function isGlobalAdmin() {
-  var want = adminEmailAddress();
-  if (!want) return false;
-  var who = visitorEmail();
-  return !!who && who === want;
-}
-
-function requireGlobalAdmin() {
-  if (!isGlobalAdmin()) throw new Error('NOT_ADMIN');
-  return visitorEmail();
+/** Whether an admin password has ever been set. */
+function adminIsConfigured() {
+  return !!PropertiesService.getScriptProperties()
+    .getProperty('ADMIN_PASSWORD_HASH');
 }
 
 /**
- * Run this ONCE from the Apps Script editor to turn global admin on.
+ * Exchanges the admin password for a session token.
  *
- * Reads the email from whoever is running it -- in the editor that is
- * unambiguously you -- and stores it. Running it from anywhere else cannot
- * happen: it is not in the actions() allow-list, so the browser cannot ask
- * for it.
+ * Lockout is counted in script properties rather than against a row,
+ * because there is no row -- there is one admin, not a table of them.
  */
-function setUpAdmin() {
-  var me = String(Session.getEffectiveUser().getEmail() || '').trim().toLowerCase();
-  if (!me) {
-    throw new Error('Could not read your email. Run this from the editor.');
+function adminSignIn(payload) {
+  payload = payload || {};
+  var props = PropertiesService.getScriptProperties();
+
+  var hash = props.getProperty('ADMIN_PASSWORD_HASH');
+  var salt = props.getProperty('ADMIN_PASSWORD_SALT');
+  if (!hash || !salt) {
+    decoyHash();
+    throw new Error('Global admin has not been set up yet.');
   }
-  PropertiesService.getScriptProperties().setProperty('ADMIN_EMAIL', me);
 
-  console.log('Global admin is now: ' + me);
-  console.log('');
-  console.log('Next: Deploy > New deployment > Web app');
-  console.log('  Execute as:       User accessing the web app');
-  console.log('  Who has access:   Only myself');
-  console.log('That deployment URL is your admin page. The family app keeps');
-  console.log('its own URL and its own settings -- do not change those.');
-  return me;
+  var until = props.getProperty('ADMIN_LOCKED_UNTIL');
+  if (until) {
+    var mins = Math.ceil((new Date(until).getTime() - Date.now()) / 60000);
+    if (mins > 0) {
+      throw new Error('Too many wrong tries. Try again in ' + mins +
+                      (mins === 1 ? ' minute.' : ' minutes.'));
+    }
+  }
+
+  if (!safeEqual(hashSecret(String(payload.password || ''), salt), hash)) {
+    var n = Number(props.getProperty('ADMIN_FAILED') || 0) + 1;
+    if (n >= ADMIN_MAX_ATTEMPTS) {
+      props.setProperty('ADMIN_FAILED', '0');
+      props.setProperty('ADMIN_LOCKED_UNTIL',
+        new Date(Date.now() + ADMIN_LOCKOUT_MINUTES * 60000).toISOString());
+    } else {
+      props.setProperty('ADMIN_FAILED', String(n));
+    }
+    throw new Error('That is not the admin password.');
+  }
+
+  props.setProperty('ADMIN_FAILED', '0');
+  props.setProperty('ADMIN_LOCKED_UNTIL', '');
+  logAction('', '', '', 'admin_signed_in', String(payload.deviceLabel || ''));
+
+  return {
+    adminToken: openSession('admin', '', '', String(payload.deviceLabel || ''),
+                            ADMIN_SESSION_HOURS * 3600 * 1000)
+  };
 }
 
-/** Turns it off again. Editor only, same as setUpAdmin(). */
-function turnOffAdmin() {
-  PropertiesService.getScriptProperties().deleteProperty('ADMIN_EMAIL');
-  console.log('Global admin is off. Nobody passes the check now.');
+/** Ends this device's admin session, and any household seat it holds. */
+function adminSignOut(payload) {
+  payload = payload || {};
+  if (payload.memberToken) closeSession(payload.memberToken);
+  if (payload.householdToken) closeSession(payload.householdToken);
+  if (payload.adminToken) closeSession(payload.adminToken);
+  return { ok: true };
 }
 
+/** Every admin session everywhere, gone. Used when the password changes. */
+function adminEndAllSessions() {
+  var all = findAll(CONFIG.SHEET_SESSIONS, { kind: 'admin' });
+  for (var i = all.length - 1; i >= 0; i--) remove(CONFIG.SHEET_SESSIONS, all[i]);
+}
+
+/** Changes the admin password from inside the admin page. */
+function changeAdminPassword(payload) {
+  payload = payload || {};
+  requireGlobalAdmin(payload);
+
+  var next = String(payload.newPassword || '');
+  if (next.length < 10) {
+    throw new Error('Use an admin password of at least 10 characters.');
+  }
+
+  var salt = randomToken(16);
+  PropertiesService.getScriptProperties().setProperties({
+    ADMIN_PASSWORD_HASH: hashSecret(next, salt),
+    ADMIN_PASSWORD_SALT: salt,
+    ADMIN_FAILED: '0',
+    ADMIN_LOCKED_UNTIL: ''
+  });
+
+  adminEndAllSessions();
+  logAction('', '', '', 'admin_password_changed', '');
+  return { ok: true };
+}
+
+/**
+ * The check every admin action makes.
+ *
+ * Takes the payload rather than reading an ambient identity: the token in
+ * the request is the only thing that says this caller is the admin.
+ */
+function requireGlobalAdmin(payload) {
+  var s = readSession((payload || {}).adminToken, 'admin');
+  if (!s) throw new Error('NOT_ADMIN');
+  return 'admin';
+}
+
+/** True when this request carries a live admin session. */
+function hasAdminSession(payload) {
+  try {
+    requireGlobalAdmin(payload);
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
 // ---------------------------------------------------------------------
 // The overview
 // ---------------------------------------------------------------------
 
 /** Every household, with enough of a summary to pick one. */
 function adminOverview(payload) {
-  requireGlobalAdmin();
+  payload = payload || {};
+  requireGlobalAdmin(payload);
 
   var members = rows(CONFIG.SHEET_MEMBERS);
   var chores = rows(CONFIG.SHEET_CHORES);
@@ -151,7 +255,7 @@ function adminOverview(payload) {
   });
 
   return {
-    admin: visitorEmail(),
+    admin: 'Global admin',
     today: today,
     households: rows(CONFIG.SHEET_HOUSEHOLDS).map(function (h) {
       var b = bucket(h.householdId);
@@ -183,7 +287,7 @@ function isLocked(h) {
 /** One household's recent activity, newest first. */
 function adminActivityLog(payload) {
   payload = payload || {};
-  requireGlobalAdmin();
+  requireGlobalAdmin(payload);
 
   var want = String(payload.householdId || '');
   var limit = Math.max(1, Math.min(200, Number(payload.limit) || 60));
@@ -218,7 +322,7 @@ function adminActivityLog(payload) {
  */
 function adminEnterHousehold(payload) {
   payload = payload || {};
-  var admin = requireGlobalAdmin();
+  var admin = requireGlobalAdmin(payload);
 
   var h = findOne(CONFIG.SHEET_HOUSEHOLDS,
                   { householdId: String(payload.householdId || '') });
@@ -255,7 +359,7 @@ function adminEnterHousehold(payload) {
  */
 function adminLeaveHousehold(payload) {
   payload = payload || {};
-  var admin = requireGlobalAdmin();
+  var admin = requireGlobalAdmin(payload);
 
   var hs = readSession(payload.householdToken, 'household');
   if (hs) logAction(hs.householdId, '', '', 'admin_left', admin);
@@ -279,7 +383,7 @@ function adminLeaveHousehold(payload) {
  */
 function adminResetPassword(payload) {
   payload = payload || {};
-  var admin = requireGlobalAdmin();
+  var admin = requireGlobalAdmin(payload);
 
   var h = findOne(CONFIG.SHEET_HOUSEHOLDS,
                   { householdId: String(payload.householdId || '') });
@@ -309,7 +413,7 @@ function adminResetPassword(payload) {
 /** Clears a lockout without changing the password. */
 function adminUnlockHousehold(payload) {
   payload = payload || {};
-  var admin = requireGlobalAdmin();
+  var admin = requireGlobalAdmin(payload);
 
   var h = findOne(CONFIG.SHEET_HOUSEHOLDS,
                   { householdId: String(payload.householdId || '') });
@@ -329,7 +433,7 @@ function adminUnlockHousehold(payload) {
  */
 function adminFillHousehold(payload) {
   payload = payload || {};
-  var admin = requireGlobalAdmin();
+  var admin = requireGlobalAdmin(payload);
 
   var h = findOne(CONFIG.SHEET_HOUSEHOLDS,
                   { householdId: String(payload.householdId || '') });
@@ -355,7 +459,7 @@ function adminFillHousehold(payload) {
  */
 function adminDeleteHousehold(payload) {
   payload = payload || {};
-  var admin = requireGlobalAdmin();
+  var admin = requireGlobalAdmin(payload);
 
   var h = findOne(CONFIG.SHEET_HOUSEHOLDS,
                   { householdId: String(payload.householdId || '') });
