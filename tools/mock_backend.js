@@ -69,16 +69,16 @@
   // Seed data, so the board can be looked at without ten minutes of typing
   // ---------------------------------------------------------------
   function seed() {
-    var h = { householdId: id('h'), name: 'The Sewells',
+    var h = { householdId: id('h'), name: 'The Hogsworths',
               ownerEmail: 'demo@example.com', password: 'password123',
               lastFilledOn: '' };
     DB.households.push(h);
 
     var people = [
-      ['Michael', 'owner', ''],
-      ['Sarah', 'approver', '1234'],
-      ['Ellie', 'member', '1111'],
-      ['Jack', 'member', '']
+      ['Rowan', 'owner', ''],
+      ['Casey', 'approver', '1234'],
+      ['Elliot', 'member', '1111'],
+      ['Frankie', 'member', '']
     ];
     people.forEach(function (p, i) {
       DB.members.push({
@@ -1238,7 +1238,7 @@
 
   // Announced so nobody mistakes the preview for the real thing.
   console.log('%c[mock backend] Preview only. Demo sign-in: ' +
-              'demo@example.com / password123. PINs: Sarah 1234, Ellie 1111.',
+              'demo@example.com / password123. PINs: Casey 1234, Elliot 1111.',
               'color:#02407d;font-weight:bold');
   window.MOCK_DB = DB;
 })();

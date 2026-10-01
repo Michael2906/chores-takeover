@@ -72,12 +72,16 @@
         <form id="form-create" class="form" autocomplete="on" hidden>
           <label class="field">
             <span>Household name</span>
-            <input type="text" name="householdName" placeholder="The Sewells"
+            <!-- Invented, not anybody's. These two are the only strings on
+                 the whole sign-up form that a stranger reads before they
+                 have an account, so they do not get to be a real household's
+                 name. -->
+            <input type="text" name="householdName" placeholder="The Hogsworths"
                    required maxlength="60" />
           </label>
           <label class="field">
             <span>Your name</span>
-            <input type="text" name="ownerName" placeholder="Michael"
+            <input type="text" name="ownerName" placeholder="Rowan"
                    autocomplete="name" required maxlength="40" />
           </label>
           <label class="field">

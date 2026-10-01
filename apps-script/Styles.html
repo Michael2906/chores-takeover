@@ -52,6 +52,14 @@
 
   --lime: #c9f227;
   --blue: #2f6bff;
+
+  /* The big surfaces -- the sign-in and name-list backgrounds, and the
+     header. Acid lime is the right colour for a 2rem button and the wrong
+     one for half a 27-inch screen: at that size it stops being an accent
+     and starts being a headache. This is the same hue family, desaturated
+     far enough to sit behind things all day. Lime stays for the small,
+     loud, deliberate parts -- go buttons, points, done. */
+  --wash: #d9e4bd;
   --coral: #ff5a4e;
   --violet: #9b6bff;
   --sun: #ffd84d;
@@ -117,7 +125,7 @@
   --dots-size: 22px 22px;
   --stripes: repeating-linear-gradient(
     -45deg,
-    rgba(20, 16, 14, 0.09) 0 10px,
+    rgba(20, 16, 14, 0.055) 0 10px,
     transparent 10px 20px);
 }
 
@@ -208,7 +216,7 @@ strong, b { font-weight: 800; }
   align-items: center;
   justify-content: center;
   gap: var(--spacing-md);
-  background-color: var(--lime);
+  background-color: var(--wash);
   background-image: var(--stripes);
   z-index: 50;
 }
@@ -257,7 +265,7 @@ strong, b { font-weight: 800; }
   width: 2rem;
   height: 2rem;
   border: 0.32rem solid var(--ink);
-  border-top-color: var(--paper);
+  border-top-color: var(--lime);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -280,7 +288,7 @@ strong, b { font-weight: 800; }
   align-items: center;
   justify-content: center;
   padding: var(--spacing-md);
-  background-color: var(--lime);
+  background-color: var(--wash);
   background-image: var(--stripes);
 }
 
@@ -593,7 +601,7 @@ strong, b { font-weight: 800; }
   gap: var(--spacing-sm);
   height: var(--header-h);
   padding: 0 var(--spacing-sm);
-  background: var(--lime);
+  background: var(--wash);
   border-bottom: var(--border);
   flex: none;
   z-index: 10;

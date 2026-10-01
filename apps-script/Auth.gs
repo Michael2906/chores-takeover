@@ -638,7 +638,7 @@ function updateMember(payload) {
     changes.name = name;
   }
 
-  // The display name is what the household sees -- "Dad" rather than Michael.
+  // The display name is what the household sees -- "Dad" rather than Rowan.
   // realName is what the account is actually in and is never shown on the
   // board, so changing one does not touch the other.
   if (payload.realName !== undefined) {

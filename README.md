@@ -202,8 +202,8 @@ Then open `build/preview.html`, or serve it:
 .venv/Scripts/python -m http.server -d build 8777
 ```
 
-Demo sign-in is `demo@example.com` / `password123`; PINs are Sarah `1234`,
-Ellie `1111`. The preview is fake data in memory — nothing it does touches the
+Demo sign-in is `demo@example.com` / `password123`; PINs are Casey `1234`,
+Elliot `1111`. The preview is fake data in memory — nothing it does touches the
 real spreadsheet.
 
 To exercise the wrapper bridge, serve the same folder on a **second** port and
@@ -491,8 +491,8 @@ silently grow:
 - **The Trough** skips an item that still has an unfinished chore anywhere. It
   stays with whoever has it until it is approved, or a parent hands it to
   somebody else.
-- **The Sty** skips **per person**. Ellie still owing yesterday's bed has
-  nothing to do with whether Jack gets today's — she keeps hers, he gets a
+- **The Sty** skips **per person**. One child still owing yesterday's bed has
+  nothing to do with whether another gets today's — they keep theirs, the rest get a
   fresh one.
 - **Repeating chores** skip a series with anything unfinished in it.
 

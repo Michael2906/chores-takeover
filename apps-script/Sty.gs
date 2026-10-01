@@ -202,9 +202,9 @@ function fillStyFor(householdId, actorId) {
   var groupIndex = groupIndexFor(householdId);
 
   // Unfinished Sty chores carry over the same way the Trough's do, but PER
-  // PERSON: this list is everybody's, so Ellie still owing yesterday's bed
-  // has nothing to do with whether Jack gets today's. She keeps hers; he
-  // gets a fresh one.
+  // PERSON: this list is everybody's, so one child still owing yesterday's
+  // bed has nothing to do with whether another gets today's. They keep
+  // theirs; everyone else gets a fresh one.
   var owed = {};
   findAll(CONFIG.SHEET_CHORES, { householdId: householdId })
     .forEach(function (c) {

@@ -113,7 +113,7 @@ def render():
         '<div style="position:fixed;left:0;right:0;bottom:0;z-index:99;'
         'background:#914a42;color:#fff;font:12px Arial;padding:4px 8px;'
         'text-align:center">LOCAL PREVIEW — fake data. '
-        'demo@example.com / password123 · PINs: Sarah 1234, Ellie 1111</div>'
+        'demo@example.com / password123 · PINs: Casey 1234, Elliot 1111</div>'
     )
     # Preview-only: #autofill drives the REAL sign-in form, so the client path
     # under test (form submit -> api -> TOKENS setter -> the wrapper bridge) is
