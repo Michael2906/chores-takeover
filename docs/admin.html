@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Chore Boar Admin</title>
+    <meta name="theme-color" content="#f5a33c" />
+    <meta name="description" content="Every household at once." />
+
+    <!--
+      This page exists for ONE reason: the home-screen icon.
+
+      iOS reads apple-touch-icon from the TOP-LEVEL document. Added straight
+      from the /exec URL the top-level document is Google's own wrapper, which
+      we cannot touch, so the icon came out as a grey letter. setFaviconUrl()
+      on the HtmlOutput fixes the browser tab and is enough for Android; iOS
+      wants this tag, and this tag has to live on a page we serve.
+
+      Everything else here is incidental. Unlike the family wrapper, this one
+      is NOT a token bridge -- the admin's sessions are borrowed, last two
+      hours, and are deliberately never written to storage.
+    -->
+    <link rel="icon" href="./icon-admin.png" />
+    <link rel="apple-touch-icon" href="./icon-admin.png" />
+    <meta name="apple-mobile-web-app-title" content="Chore Boar Admin" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+
+    <!-- An admin console has no business in a search index. -->
+    <meta name="robots" content="noindex, nofollow" />
+
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: #f5a33c;
+        overflow: hidden;
+      }
+      iframe {
+        display: block;
+        border: 0;
+        width: 100%;
+        height: 100%;
+      }
+      /* Shown only if the frame never reports in -- see below. */
+      #stuck {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: #f5a33c;
+        color: #14100e;
+        font: 16px/1.5 Archivo, 'Segoe UI', Arial, Helvetica, sans-serif;
+        padding: 2rem 1.5rem;
+        text-align: center;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        gap: 1rem;
+      }
+      #stuck.show { display: flex; }
+      #stuck h1 { font-size: 1.3rem; margin: 0; }
+      #stuck p { margin: 0; max-width: 24rem; }
+      #stuck a {
+        display: inline-block;
+        background: #fffdf7;
+        color: #14100e;
+        border: 3px solid #14100e;
+        box-shadow: 5px 5px 0 #14100e;
+        padding: 0.6rem 1rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        text-decoration: none;
+      }
+    </style>
+  </head>
+
+  <body>
+    <iframe id="app"
+            title="Chore Boar Admin"
+            allow="clipboard-write"
+            src="https://script.google.com/macros/s/AKfycby-J7FGzFkGnC0dFFRWz6hpzzXrhBQfMTJfyucNhehv20m_O2_tRfkYnhXSxMpi4XpH/exec"></iframe>
+
+    <div id="stuck">
+      <h1>Could not load the admin page</h1>
+      <p>
+        This usually means the Google sign-in has lapsed. Google will not let
+        its sign-in page be shown inside a frame, so it has to be opened
+        directly once — after that this page works again.
+      </p>
+      <a id="direct"
+         href="https://script.google.com/macros/s/AKfycby-J7FGzFkGnC0dFFRWz6hpzzXrhBQfMTJfyucNhehv20m_O2_tRfkYnhXSxMpi4XpH/exec"
+         target="_blank" rel="noopener">Open it directly</a>
+    </div>
+
+    <noscript>
+      <p style="font:16px Arial;padding:2rem;text-align:center">
+        Chore Boar needs JavaScript.
+      </p>
+    </noscript>
+
+    <script>
+      (function () {
+        'use strict';
+
+        // The app says hello to its parent on load -- that is its token
+        // bridge handshake, and we ignore what it is asking for and use it
+        // purely as proof that something really rendered in there.
+        //
+        // We do NOT answer it. Answering is how the family wrapper hands
+        // over saved sessions; the admin's are borrowed and short-lived and
+        // have no business being kept anywhere.
+        var alive = false;
+
+        function fromGoogle(origin) {
+          return origin === 'https://script.google.com' ||
+                 /^https:\/\/[a-z0-9-]+\.googleusercontent\.com$/.test(origin);
+        }
+
+        window.addEventListener('message', function (e) {
+          if (!fromGoogle(e.origin) || !e.data || typeof e.data !== 'object') return;
+          if (e.data.cb) alive = true;
+        });
+
+        // A blank orange rectangle is a worse answer than a sentence saying
+        // what went wrong and a way out of it.
+        setTimeout(function () {
+          if (!alive) document.getElementById('stuck').classList.add('show');
+        }, 8000);
+      })();
+    </script>
+  </body>
+</html>

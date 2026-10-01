@@ -330,15 +330,24 @@ by `tools/build_images.py`. Change the colours in its `ICONS` map, re-run it,
 and push: the icons are served by Pages, so a `clasp push` alone does not
 move them.
 
-Android reads that favicon for a home-screen icon. iOS prefers an
-`apple-touch-icon`, which has to be a `<link>` in the top-level document —
-somewhere we cannot reach on a raw `/exec` URL. If your iPhone still shows a
-screenshot instead of the boar, the fix is the same trick the family app
-already uses: a small first-party page on thechoreboar.fyi that frames the
-admin URL and carries its own icon. Worth knowing before you ask for it: the
-admin deployment is "only myself", so if the Google session has lapsed the
-frame tries to load a sign-in page that refuses to be framed, and you would
-have to open the raw URL once to get back in.
+Android reads that favicon for a home-screen icon. **iOS does not** — it
+wants an `apple-touch-icon`, which has to be a `<link>` in the top-level
+document, and on a raw `/exec` URL that document is Google's. Added from
+there, the admin app came out as a grey letter.
+
+So there is a second wrapper, `docs/admin.html`, served at
+**thechoreboar.fyi/admin.html**. Add the admin app to a home screen *from
+that URL* rather than the `/exec` one. Unlike the family wrapper it is not a
+token bridge — the admin's sessions are borrowed, last two hours and are
+never written to storage — it exists purely to own the icon.
+
+It has one failure mode worth knowing. The admin deployment is "only
+myself", so when the Google session lapses the frame tries to load a sign-in
+page, and Google refuses to be framed. The app announces itself to its
+parent on load, so the wrapper uses that as proof something rendered: if
+nothing reports in within eight seconds it replaces the blank frame with a
+sentence explaining this and a button that opens the `/exec` URL directly.
+Signing in there once makes the wrapper work again.
 
 ### Looking at it locally
 
