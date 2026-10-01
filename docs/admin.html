@@ -32,6 +32,10 @@
           href="https://thechoreboar.fyi/icon-admin-v2.png" />
     <link rel="apple-touch-icon-precomposed" sizes="180x180"
           href="https://thechoreboar.fyi/icon-admin-v2.png" />
+    <!-- iOS 16.4+ and every Android prefer the manifest's icons over
+         apple-touch-icon when a manifest is present, so both are offered.
+         Belt and braces: whichever one the phone looks at, it finds a boar. -->
+    <link rel="manifest" href="/admin.webmanifest" />
     <meta name="apple-mobile-web-app-title" content="Chore Boar Admin" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />

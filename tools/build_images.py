@@ -71,14 +71,19 @@ def encode(path, width):
 #
 # icon-admin.png stays because Config.gs hands it to setFaviconUrl(), and
 # changing that would mean another Apps Script deployment for no gain.
+# name -> (background, pixel size)
 ICONS = {
-    "icon.png": (46, 207, 180, 255),            # teal   -- family favicon
-    "icon-admin.png": (245, 163, 60, 255),      # amber  -- admin favicon
-    "icon-admin-v2.png": (245, 163, 60, 255),   # amber  -- admin touch icon
+    "icon.png": ((46, 207, 180, 255), 180),            # teal  family favicon
+    "icon-admin.png": ((245, 163, 60, 255), 180),      # amber admin favicon
+    "icon-admin-v2.png": ((245, 163, 60, 255), 180),   # amber apple-touch-icon
+    # For the web app manifest, which newer iOS and every Android prefer
+    # over the apple-touch-icon when one is present.
+    "icon-admin-192.png": ((245, 163, 60, 255), 192),
+    "icon-admin-512.png": ((245, 163, 60, 255), 512),
 }
 
 
-def build_icon(src_dir, filename, background):
+def build_icon(src_dir, filename, background, size=180):
     """One square home-screen icon.
 
     The logo is wide (roughly 2:1), so it is centred on a solid ground rather
@@ -91,7 +96,7 @@ def build_icon(src_dir, filename, background):
     if box:
         im = im.crop(box)
 
-    size, pad = 180, 18
+    pad = round(size * 0.1)
     inner = size - pad * 2
     w = inner
     h = max(1, round(im.height * w / im.width))
@@ -146,8 +151,8 @@ def main():
     with io.open(out_path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write("\n".join(lines) + "\n")
 
-    for filename, background in sorted(ICONS.items()):
-        build_icon(src_dir, filename, background)
+    for filename, (background, size) in sorted(ICONS.items()):
+        build_icon(src_dir, filename, background, size)
 
     print("\nWrote %s (%.1f KB)" % (
         os.path.relpath(out_path, ROOT), os.path.getsize(out_path) / 1024))
