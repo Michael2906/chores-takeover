@@ -123,9 +123,32 @@
     </section>
 
     <!-- ============================================================
+         Screen 2b: the global admin page -- every household at once.
+
+         Only ever shown when the server said this visitor is the admin;
+         the flag comes from Session.getActiveUser(), not from the URL.
+         ============================================================ -->
+    <section id="admin" class="screen" hidden>
+      <div class="card admin-card">
+        <div class="picker-head">
+          <h1>Global admin</h1>
+          <span class="admin-who" id="admin-who"></span>
+        </div>
+        <div id="admin-list"></div>
+      </div>
+    </section>
+
+    <!-- ============================================================
          Screen 3: the board
          ============================================================ -->
     <div id="app" class="screen app" hidden>
+      <!-- Only while the admin is borrowing a household's seat. -->
+      <div id="admin-bar" class="admin-bar" hidden>
+        <span id="admin-bar-text"></span>
+        <button class="btn btn-sm btn-secondary" id="admin-leave">
+          Leave this household
+        </button>
+      </div>
       <header id="header">
         <div class="brand">
           <div class="brand-mark" id="header-logo"></div>
@@ -222,7 +245,8 @@
         minPassword: <?!= Number(config.minPassword) ?>,
         wrapperOrigins: <?!= JSON.stringify(config.wrapperOrigins) ?>,
         troughName: <?!= JSON.stringify(config.troughName) ?>,
-        storeName: <?!= JSON.stringify(config.storeName) ?>
+        storeName: <?!= JSON.stringify(config.storeName) ?>,
+        globalAdmin: <?!= JSON.stringify(!!config.globalAdmin) ?>
       };
     </script>
     <?!= include('Scripts'); ?>

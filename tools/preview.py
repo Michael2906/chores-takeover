@@ -63,6 +63,11 @@ def config_values():
         "pinLength": grab("PIN_LENGTH", "4"),
         "minPassword": grab("MIN_PASSWORD", "8"),
         "wrapperOrigins": origins,
+        # Deployed, this comes from Session.getActiveUser(). There is no
+        # such thing locally, so the preview hangs it off the URL:
+        # preview.html#admin is the admin page, preview.html is the family
+        # app. Substituted as an EXPRESSION, not a value.
+        "globalAdmin": "(location.hash.indexOf('admin') >= 0)",
     }
 
 
@@ -79,6 +84,12 @@ def render():
     # <?= config.appName ?> and the JSON.stringify / Number forms
     def sub_expr(m):
         expr = m.group(1).strip()
+
+        # <?!= JSON.stringify(!!config.globalAdmin) ?> -- a raw JS
+        # expression rather than a value, so the preview can toggle it.
+        b = re.match(r"JSON\.stringify\(!!config\.(\w+)\)$", expr)
+        if b:
+            return cfg.get(b.group(1), "false")
 
         j = re.match(r"JSON\.stringify\(config\.(\w+)\)$", expr)
         if j:

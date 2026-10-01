@@ -143,12 +143,18 @@ function noteSuccess(sheet, rec) {
 // Sessions
 // ---------------------------------------------------------------------
 
-/** Issues a session row and returns its token. */
-function openSession(kind, householdId, memberId, deviceLabel) {
+/**
+ * Issues a session row and returns its token.
+ *
+ * `ttlMs` overrides the usual lifetime. Only the global admin passes it, to
+ * borrow a seat for a couple of hours rather than the sixty days a real
+ * family device gets.
+ */
+function openSession(kind, householdId, memberId, deviceLabel, ttlMs) {
   var days = kind === 'household'
     ? Number(CONFIG.SESSION_DAYS)
     : Number(CONFIG.MEMBER_SESSION_DAYS);
-  var ms = (days || 1) * 24 * 3600 * 1000;
+  var ms = Number(ttlMs) > 0 ? Number(ttlMs) : (days || 1) * 24 * 3600 * 1000;
 
   var token = randomToken(24);
   insert(CONFIG.SHEET_SESSIONS, {

@@ -73,6 +73,12 @@
   };
 
   function persistTokens() {
+    // On the admin page the tokens belong to somebody else's household and
+    // last two hours. Writing them to storage would leave a stale borrowed
+    // seat lying about on this machine, and could hand it to the family app
+    // if the two deployments ever share an origin.
+    if (window.CONFIG_CLIENT && CONFIG_CLIENT.globalAdmin) return;
+
     if (bridge.ready) {
       bridge.win.postMessage({
         cb: 'save',
@@ -213,6 +219,8 @@
   // -----------------------------------------------------------------
 
   var state = {
+    // Set only on the admin page, and only while a household is open.
+    admin: { on: false, household: null, actingAs: null },
     household: null,
     members: [],
     me: null,
@@ -295,13 +303,18 @@
   // -----------------------------------------------------------------
 
   function show(which) {
-    ['splash', 'gate', 'picker', 'app'].forEach(function (id) {
+    ['splash', 'gate', 'picker', 'admin', 'app'].forEach(function (id) {
       $(id).hidden = (id !== which);
     });
   }
 
   /** Decides which screen to show, from whatever the device remembered. */
   function boot() {
+    // The admin page is its own front door. It never resumes a remembered
+    // session, because the whole point is to start from "which household?"
+    // -- and because its tokens are borrowed, not the device's own.
+    if (CONFIG_CLIENT.globalAdmin && !state.admin.on) { adminHome(); return; }
+
     show('splash');
     api('resumeSession', {})
       .then(function (data) {
@@ -591,6 +604,308 @@
   }
 
   // -----------------------------------------------------------------
+  // Screen 2b -- the global admin page
+  // -----------------------------------------------------------------
+  //
+  // Only reachable when the SERVER said so: CONFIG_CLIENT.globalAdmin comes
+  // from Session.getActiveUser() on a deployment that authenticates its
+  // visitors. Nothing here decides anything -- every action re-checks, and
+  // flipping the flag in a console buys an immediate NOT_ADMIN.
+  //
+  // Opening a household does not rebuild the family interface a second
+  // time. The server hands back ordinary session tokens for that
+  // household's account holder and the normal app runs on them unchanged,
+  // which is why there is no second set of permission rules here to get
+  // subtly wrong. The only addition is the bar across the top saying whose
+  // seat this is, and how to give it back.
+
+  function adminHome() {
+    show('splash');
+    api('adminOverview', {}).then(function (data) {
+      renderAdmin(data);
+      show('admin');
+    }).catch(function (err) {
+      // The flag said admin and the server disagrees -- the deployment is
+      // not the one that authenticates, or ADMIN_EMAIL was never stored.
+      show('gate');
+      toast(err.message === 'NOT_ADMIN'
+        ? 'This page is not signed in as the admin.'
+        : err.message, 'bad');
+    });
+  }
+
+  function renderAdmin(data) {
+    $('admin-who').textContent = data.admin || '';
+
+    $('admin-list').innerHTML = data.households.length
+      ? '<div class="list-rows">' + data.households.map(function (h) {
+          var tags = [
+            h.members + (h.members === 1 ? ' person' : ' people'),
+            h.openChores + ' open',
+            h.points + 'p held'
+          ];
+          if (h.waitingApproval) tags.push(h.waitingApproval + ' awaiting approval');
+          tags.push(h.filledToday ? 'filled today' : 'not filled today');
+          if (h.locked) tags.push('LOCKED OUT');
+
+          return '<div class="list-row">' +
+            '<span class="grow">' +
+              '<span class="t">' + esc(h.name) + '</span>' +
+              '<span class="sub">' + esc(h.ownerEmail) + '</span>' +
+              '<span class="row-tags">' +
+                tags.map(function (t) {
+                  return '<span class="row-tag">' + esc(t) + '</span>';
+                }).join('') +
+              '</span>' +
+            '</span>' +
+            '<span class="row-acts">' +
+              '<button class="btn btn-sm btn-primary" data-open="' +
+                esc(h.householdId) + '">Open</button>' +
+              '<button class="btn btn-sm btn-secondary" data-more="' +
+                esc(h.householdId) + '">More…</button>' +
+            '</span>' +
+          '</div>';
+        }).join('') + '</div>'
+      : '<p class="form-hint">No households yet.</p>';
+
+    $('admin-list').onclick = function (e) {
+      var open = e.target.closest('[data-open]');
+      var more = e.target.closest('[data-more]');
+
+      if (open) {
+        busy(open, true);
+        adminEnter(open.dataset.open, function () { busy(open, false); });
+        return;
+      }
+      if (more) {
+        var h = data.households.filter(function (x) {
+          return String(x.householdId) === String(more.dataset.more);
+        })[0];
+        if (h) adminHouseholdMenu(h);
+      }
+    };
+  }
+
+  /** Borrows the account holder's seat and lands on the ordinary board. */
+  function adminEnter(householdId, done) {
+    api('adminEnterHousehold', { householdId: householdId })
+      .then(function (data) {
+        TOKENS.household = data.householdToken;
+        TOKENS.member = data.memberToken;
+        state.admin.on = true;
+        state.admin.household = data.household;
+        state.admin.actingAs = data.actingAs;
+        state.household = data.household;
+        state.me = data.actingAs;
+        return refresh();
+      })
+      .then(function () {
+        renderAdminBar();
+        show('app');
+        if (done) done();
+      })
+      .catch(function (err) {
+        if (done) done();
+        fail(err);
+      });
+  }
+
+  function renderAdminBar() {
+    var bar = $('admin-bar');
+    if (!bar) return;
+    bar.hidden = !state.admin.on;
+    if (!state.admin.on) return;
+
+    $('admin-bar-text').textContent =
+      'Global admin — acting as ' +
+      (state.admin.actingAs ? state.admin.actingAs.name : 'the account holder') +
+      ' in ' + (state.admin.household ? state.admin.household.name : '');
+  }
+
+  function adminLeave() {
+    api('adminLeaveHousehold', {}).then(function () {
+      TOKENS.household = '';
+      TOKENS.member = '';
+      state.admin.on = false;
+      state.admin.household = null;
+      state.admin.actingAs = null;
+      state.me = null;
+      state.chores = [];
+      $('admin-bar').hidden = true;
+      closeModal();
+      adminHome();
+    }).catch(fail);
+  }
+
+  /** Everything that is the admin's to do rather than the household's. */
+  function adminHouseholdMenu(h) {
+    openModal(esc(h.name),
+      '<p class="form-hint" style="text-align:left">' +
+        esc(h.ownerEmail) + '<br>' +
+        'Created ' + esc(String(h.createdAt).slice(0, 10) || 'unknown') +
+        ' · last hand-out ' + esc(h.lastFilledOn || 'never') +
+      '</p>' +
+      (h.locked
+        ? '<p class="form-error">Locked out after too many wrong ' +
+          'passwords.</p>'
+        : '') +
+      '<hr class="hr">' +
+      '<div class="list-rows">' +
+        '<div class="list-row"><span class="grow">' +
+          '<span class="t">Recent activity</span>' +
+          '<span class="sub">What has happened in this household.</span>' +
+          '</span><span class="row-acts">' +
+          '<button class="btn btn-sm btn-secondary" id="adm-log">View</button>' +
+        '</span></div>' +
+        '<div class="list-row"><span class="grow">' +
+          '<span class="t">Run tonight’s hand-out now</span>' +
+          '<span class="sub">Takes the same lock as the nightly job, so it ' +
+          'cannot double anybody up.</span>' +
+          '</span><span class="row-acts">' +
+          '<button class="btn btn-sm btn-secondary" id="adm-fill">Fill</button>' +
+        '</span></div>' +
+        (h.locked
+          ? '<div class="list-row"><span class="grow">' +
+              '<span class="t">Clear the lockout</span>' +
+              '<span class="sub">Lets them try the password again.</span>' +
+              '</span><span class="row-acts">' +
+              '<button class="btn btn-sm btn-secondary" id="adm-unlock">' +
+              'Unlock</button>' +
+            '</span></div>'
+          : '') +
+        '<div class="list-row"><span class="grow">' +
+          '<span class="t">Set a new password</span>' +
+          '<span class="sub">For when they are locked out of their own ' +
+          'account. Signs all their devices out.</span>' +
+          '</span><span class="row-acts">' +
+          '<button class="btn btn-sm btn-warn" id="adm-pw">Reset</button>' +
+        '</span></div>' +
+        '<div class="list-row"><span class="grow">' +
+          '<span class="t">Delete this household</span>' +
+          '<span class="sub">Everything: people, chores, prizes, groups. ' +
+          'There is no undo.</span>' +
+          '</span><span class="row-acts">' +
+          '<button class="btn btn-sm btn-danger" id="adm-del">Delete</button>' +
+        '</span></div>' +
+      '</div>',
+      [{ label: 'Back', kind: 'btn-secondary', act: adminHome }]);
+
+    $('adm-log').addEventListener('click', function (btn) {
+      adminLogView(h);
+    });
+
+    $('adm-fill').addEventListener('click', function (e) {
+      var b = e.currentTarget;
+      busy(b, true);
+      api('adminFillHousehold', { householdId: h.householdId })
+        .then(function (res) {
+          renderAdmin(res.overview);
+          show('admin');
+          closeModal();
+          toast(res.alreadyDone
+            ? 'Today was already handed out.'
+            : res.written + ' chores handed out.', 'good');
+        })
+        .catch(fail).then(function () { busy(b, false); });
+    });
+
+    var unlock = $('adm-unlock');
+    if (unlock) {
+      unlock.addEventListener('click', function (e) {
+        var b = e.currentTarget;
+        busy(b, true);
+        api('adminUnlockHousehold', { householdId: h.householdId })
+          .then(function (data) {
+            renderAdmin(data);
+            show('admin');
+            closeModal();
+            toast('Lockout cleared.', 'good');
+          })
+          .catch(fail).then(function () { busy(b, false); });
+      });
+    }
+
+    $('adm-pw').addEventListener('click', function () { adminResetForm(h); });
+    $('adm-del').addEventListener('click', function () { adminDeleteForm(h); });
+  }
+
+  function adminLogView(h) {
+    api('adminActivityLog', { householdId: h.householdId })
+      .then(function (data) {
+        openModal(esc(h.name) + ' — activity',
+          data.entries.length
+            ? '<div class="list-rows">' + data.entries.map(function (r) {
+                return '<div class="list-row"><span class="grow">' +
+                  '<span class="t">' + esc(r.action) + '</span>' +
+                  '<span class="sub">' + esc(String(r.at).slice(0, 16)
+                    .replace('T', ' ')) + ' · ' + esc(r.who) +
+                    (r.detail ? ' · ' + esc(r.detail) : '') +
+                  '</span></span></div>';
+              }).join('') + '</div>'
+            : '<p class="form-hint">Nothing logged yet.</p>',
+          [{ label: 'Back', kind: 'btn-secondary',
+             act: function () { adminHouseholdMenu(h); } }]);
+      })
+      .catch(fail);
+  }
+
+  function adminResetForm(h) {
+    openModal('New password for ' + esc(h.name),
+      '<p class="form-hint" style="text-align:left">You are setting this ' +
+      'without knowing the old one. Every device in that household is ' +
+      'signed out, so tell them the new password before you do it.</p>' +
+      '<form class="form" id="adm-pw-form">' +
+        '<label class="field"><span>New password</span>' +
+          '<input type="password" name="pw" autocomplete="new-password" ' +
+                 'minlength="' + CONFIG_CLIENT.minPassword + '" /></label>' +
+      '</form>',
+      [
+        { label: 'Back', kind: 'btn-secondary',
+          act: function () { adminHouseholdMenu(h); } },
+        { label: 'Set it', kind: 'btn-warn', act: function (btn) {
+            var pw = $('adm-pw-form').pw.value;
+            busy(btn, true);
+            api('adminResetPassword', {
+              householdId: h.householdId, newPassword: pw
+            }).then(function (data) {
+              renderAdmin(data);
+              show('admin');
+              closeModal();
+              toast('Password set. Their devices are signed out.', 'good');
+            }).catch(fail).then(function () { busy(btn, false); });
+          } }
+      ]);
+  }
+
+  function adminDeleteForm(h) {
+    openModal('Delete ' + esc(h.name) + '?',
+      '<p class="form-hint" style="text-align:left">This removes every ' +
+      'person, chore, prize, group and session belonging to this household. ' +
+      'The activity log is kept. There is no undo beyond the ' +
+      'spreadsheet’s own version history.</p>' +
+      '<form class="form" id="adm-del-form">' +
+        '<label class="field"><span>Type the household name to confirm</span>' +
+          '<input name="confirm" placeholder="' + esc(h.name) + '" /></label>' +
+      '</form>',
+      [
+        { label: 'Back', kind: 'btn-secondary',
+          act: function () { adminHouseholdMenu(h); } },
+        { label: 'Delete it', kind: 'btn-danger', act: function (btn) {
+            busy(btn, true);
+            api('adminDeleteHousehold', {
+              householdId: h.householdId,
+              confirmName: $('adm-del-form').confirm.value
+            }).then(function (data) {
+              renderAdmin(data);
+              show('admin');
+              closeModal();
+              toast('Household deleted.', 'good');
+            }).catch(fail).then(function () { busy(btn, false); });
+          } }
+      ]);
+  }
+
+  // -----------------------------------------------------------------
   // Screen 3 -- the board
   // -----------------------------------------------------------------
 
@@ -629,6 +944,17 @@
     document.querySelectorAll('[data-menu=password]').forEach(function (b) {
       b.hidden = !isOwner;
     });
+
+    // An admin is borrowing this seat, not sitting in it. Switching person
+    // and signing the device out both ask for the household password, which
+    // is exactly the thing an admin does not have -- so they are replaced by
+    // the one way out that is theirs: the bar at the top of the board.
+    ['switch', 'signout'].forEach(function (k) {
+      document.querySelectorAll('[data-menu=' + k + ']').forEach(function (b) {
+        b.hidden = !!state.admin.on;
+      });
+    });
+    renderAdminBar();
 
     // Only parents post chores, so the add button is theirs alone. The server
     // refuses either way; this stops a child being shown a button that fails.
@@ -3065,6 +3391,9 @@
     wireGate();
     wirePicker();
     wireApp();
+
+    var leave = $('admin-leave');
+    if (leave) leave.addEventListener('click', adminLeave);
 
     // Tokens first: boot() decides which screen to show from them, so asking
     // the wrapper afterwards would flash the sign-in form at somebody who is

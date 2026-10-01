@@ -178,6 +178,7 @@ used exactly as before, so both routes work.
 | `PrizeIdeas.gs` | 61 ready-made prizes with costs. |
 | `Store.gs` | The Prize Pen, redemptions, and moving points by hand. |
 | `Suggestions.gs` | The 147 ready-made chores. Add your own here. |
+| `Admin.gs` | The global admin page: the gate, and borrowing a household's seat. |
 | `Setup.gs` | `setUp()`, and the housekeeping functions. |
 | `Index/Styles/Scripts/Images.html` | The app itself. |
 
@@ -218,6 +219,107 @@ purpose — same-origin would let the app's own `localStorage` quietly stand in
 for the bridge, which is the one thing the test needs to rule out. With them
 split, tokens appearing in `:8778`'s store and **not** `:8777`'s is proof the
 bridge carried them.
+
+---
+
+## The global admin page
+
+One person — whoever owns the script — can see every household in the
+spreadsheet and step into any of them.
+
+### Why it is a second deployment
+
+The family app has to be **Execute as: me, Access: anyone**, because the
+children have no Google accounts and must never need one. A deployment with
+anonymous access cannot tell you who is visiting, so it can never be trusted
+to authorise an admin.
+
+So the admin page is a **second web-app deployment of the same project**,
+configured the other way round. Google then authenticates the visitor and
+`Session.getActiveUser()` is real.
+
+The gate is an **identity check, not a URL check**:
+
+```js
+Session.getActiveUser().getEmail() === the stored ADMIN_EMAIL
+```
+
+which means it does not matter which of the two URLs is loaded. On the
+family deployment the active user is anonymous, so the check simply fails.
+
+There is deliberately **no fallback to `getEffectiveUser()`**. On a
+deployment that runs as the accessing user that *is* the visitor, so a
+fallback would quietly make everybody an admin the day a setting changed.
+With no `ADMIN_EMAIL` stored, global admin is off entirely.
+
+### Turning it on
+
+1. Push the code, then in the editor run **`setUpAdmin()`** once. It reads
+   your email from the account running it and stores it in script
+   properties. It is not in the `actions()` allow-list, so the browser can
+   never call it.
+
+   You will be asked to re-authorise: the manifest now also requests
+   `userinfo.email`, which is what `getActiveUser()` reads. Without that
+   scope the gate silently never passes, which is a miserable thing to debug.
+
+2. **Deploy > New deployment > Web app**, with settings that are *not* the
+   family app's:
+
+   | | |
+   | --- | --- |
+   | Execute as | **User accessing the web app** |
+   | Who has access | **Only myself** |
+
+   That URL is your admin page. The family app keeps its own URL and its own
+   settings — leave those alone.
+
+`turnOffAdmin()` clears the stored email and shuts the whole thing off.
+
+### What it does
+
+The list shows every household with its people, open chores, points held,
+whether tonight's hand-out has run, and whether they are locked out.
+
+**Open** steps into a household. Rather than build every screen a second
+time, the server mints **ordinary session tokens for that household's
+account holder** and the normal app runs on them unchanged — which is why
+there is no second set of permission rules here to get subtly wrong. You can
+do everything that household's own account holder can: add people, create
+chores, edit the Trough and the Sty, manage groups, move points, approve
+work, stock the Prize Pen.
+
+A violet bar across the top says whose seat you are in, and **Leave this
+household** gives it back. While you are in there, "Switch person" and "Sign
+this device out" are hidden — both ask for the household password, which is
+exactly the thing an admin does not have.
+
+Two things keep the borrowing honest:
+
+- the tokens last **two hours**, not the sixty days a real device gets, so a
+  forgotten tab is not a permanent back door;
+- entering and leaving are both written to that household's activity log,
+  with the admin's email.
+
+The borrowed tokens are also never written to browser storage, so they
+cannot be left lying about on the machine.
+
+**More…** holds the things that are the admin's rather than the household's:
+read the activity log, run tonight's hand-out early (through the same lock
+as the nightly job, so it cannot double anybody up), clear a lockout, set a
+new password without knowing the old one, and delete a household. Deleting
+requires typing the household's name back, because there is no undo beyond
+the spreadsheet's own version history.
+
+### Looking at it locally
+
+There is no `getActiveUser()` in a browser, so the preview hangs the flag off
+the URL instead:
+
+```
+build/preview.html          the family app
+build/preview.html#admin    the admin page
+```
 
 ---
 

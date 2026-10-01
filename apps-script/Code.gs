@@ -27,7 +27,11 @@ function doGet(e) {
     minPassword: CONFIG.MIN_PASSWORD,
     wrapperOrigins: CONFIG.WRAPPER_ORIGINS || [],
     troughName: CONFIG.TROUGH_NAME,
-    storeName: CONFIG.STORE_NAME
+    storeName: CONFIG.STORE_NAME,
+    // Decided here, server-side, from who Google says is visiting -- never
+    // from the URL. See Admin.gs. On the family deployment the visitor is
+    // anonymous and this is always false.
+    globalAdmin: isGlobalAdmin()
   };
   return template.evaluate()
     .setTitle(CONFIG.APP_NAME)
@@ -107,6 +111,17 @@ function actions() {
     addStyItem:    addStyItem,
     updateStyItem: updateStyItem,
     removeStyItem: removeStyItem,
+
+    // The global admin page. Every one of these re-checks who is asking;
+    // being in this list is not permission, it is only reachability.
+    adminOverview:        adminOverview,
+    adminActivityLog:     adminActivityLog,
+    adminEnterHousehold:  adminEnterHousehold,
+    adminLeaveHousehold:  adminLeaveHousehold,
+    adminResetPassword:   adminResetPassword,
+    adminUnlockHousehold: adminUnlockHousehold,
+    adminFillHousehold:   adminFillHousehold,
+    adminDeleteHousehold: adminDeleteHousehold,
 
     // The Prize Pen
     loadStore:         loadStore,

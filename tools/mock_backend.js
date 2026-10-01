@@ -182,6 +182,7 @@
   DB.redemptions = [];
 
   seed();
+  seedSecondHousehold();
 
   // ---------------------------------------------------------------
   // Helpers mirroring the server
@@ -374,6 +375,73 @@
     };
   }
 
+  /**
+   * A second, smaller household. Only the admin page ever sees it, and
+   * "one household" and "more than one" are different screens.
+   */
+  function seedSecondHousehold() {
+    var h = { householdId: id('h'), name: 'The Pennyworths',
+              ownerEmail: 'other@example.com', password: 'password123',
+              lastFilledOn: '', createdAt: now() };
+    DB.households.push(h);
+    [['Jamie', 'owner', ''], ['Robin', 'member', '']].forEach(function (p, i) {
+      DB.members.push({
+        memberId: id('m'), householdId: h.householdId,
+        name: p[0], realName: p[0], role: p[1], pin: p[2],
+        color: PALETTE[(i + 2) % PALETTE.length],
+        points: [0, 6][i], active: true
+      });
+    });
+  }
+
+  // ---------------------------------------------------------------
+  // The global admin -- mirroring Admin.gs
+  // ---------------------------------------------------------------
+
+  // Deployed, this is Session.getActiveUser() checked against a stored
+  // ADMIN_EMAIL. There is no such thing in a browser, so the preview simply
+  // believes the page: preview.html#admin is the admin.
+  function adminHere() {
+    return typeof CONFIG_CLIENT !== 'undefined' && !!CONFIG_CLIENT.globalAdmin;
+  }
+
+  function requireAdmin() {
+    if (!adminHere()) throw new Error('NOT_ADMIN');
+    return 'you@example.com';
+  }
+
+  function overview() {
+    requireAdmin();
+    return {
+      admin: 'you@example.com',
+      today: today(),
+      households: DB.households.map(function (h) {
+        var people = DB.members.filter(function (m) {
+          return m.householdId === h.householdId && m.active !== false;
+        });
+        var chores = DB.chores.filter(function (c) {
+          return c.householdId === h.householdId;
+        });
+        return {
+          householdId: h.householdId,
+          name: h.name,
+          ownerEmail: h.ownerEmail,
+          createdAt: h.createdAt || now(),
+          lastFilledOn: h.lastFilledOn || '',
+          filledToday: h.lastFilledOn === today(),
+          locked: !!h.locked,
+          members: people.length,
+          points: people.reduce(function (a, m) { return a + Number(m.points || 0); }, 0),
+          openChores: chores.filter(function (c) { return c.status !== 'done'; }).length,
+          waitingApproval: chores.filter(function (c) {
+            return c.status === 'submitted';
+          }).length,
+          dueToday: chores.filter(function (c) { return c.dueDate === today(); }).length
+        };
+      }).sort(function (a, b) { return a.name < b.name ? -1 : 1; })
+    };
+  }
+
   // ---------------------------------------------------------------
   // Groups, audiences and schedules -- mirroring Groups.gs
   // ---------------------------------------------------------------
@@ -539,6 +607,95 @@
       if (session(p.memberToken, 'member')) gateHouseholdPassword(p);
       DB.sessions = DB.sessions.filter(function (s) { return s.token !== p.memberToken; });
       return { ok: true };
+    },
+
+    adminOverview: function () { return overview(); },
+
+    adminActivityLog: function (p) {
+      requireAdmin();
+      return { entries: [
+        { at: now(), who: 'The system', action: 'daily_fill',
+          detail: today() + ': 14 chores' },
+        { at: now(), who: 'Rowan', action: 'member_added', detail: 'Frankie' }
+      ] };
+    },
+
+    adminEnterHousehold: function (p) {
+      requireAdmin();
+      var h = find(DB.households, 'householdId', String(p.householdId || ''));
+      if (!h) throw new Error('No such household.');
+      var owner = DB.members.filter(function (m) {
+        return m.householdId === h.householdId && m.active !== false &&
+               m.role === 'owner';
+      })[0];
+      if (!owner) throw new Error('That household has no account holder left to act as.');
+      return {
+        householdToken: openSession('household', h.householdId, ''),
+        memberToken: openSession('member', h.householdId, owner.memberId),
+        household: { householdId: h.householdId, name: h.name },
+        actingAs: publicMember(owner)
+      };
+    },
+
+    adminLeaveHousehold: function (p) {
+      requireAdmin();
+      DB.sessions = DB.sessions.filter(function (s) {
+        return s.token !== p.householdToken && s.token !== p.memberToken;
+      });
+      return { ok: true };
+    },
+
+    adminResetPassword: function (p) {
+      requireAdmin();
+      var h = find(DB.households, 'householdId', String(p.householdId || ''));
+      if (!h) throw new Error('No such household.');
+      if (String(p.newPassword || '').length < 8) {
+        throw new Error('Use a password of at least 8 characters.');
+      }
+      h.password = String(p.newPassword);
+      h.locked = false;
+      DB.sessions = DB.sessions.filter(function (s) {
+        return s.householdId !== h.householdId;
+      });
+      return overview();
+    },
+
+    adminUnlockHousehold: function (p) {
+      requireAdmin();
+      var h = find(DB.households, 'householdId', String(p.householdId || ''));
+      if (!h) throw new Error('No such household.');
+      h.locked = false;
+      return overview();
+    },
+
+    adminFillHousehold: function (p) {
+      requireAdmin();
+      var h = find(DB.households, 'householdId', String(p.householdId || ''));
+      if (!h) throw new Error('No such household.');
+      if (h.lastFilledOn === today()) {
+        return { alreadyDone: true, written: 0, overview: overview() };
+      }
+      var res = window.MOCK_NIGHTLY();
+      return { alreadyDone: false, written: res.filled || 0, overview: overview() };
+    },
+
+    adminDeleteHousehold: function (p) {
+      requireAdmin();
+      var h = find(DB.households, 'householdId', String(p.householdId || ''));
+      if (!h) throw new Error('No such household.');
+      if (String(p.confirmName || '').trim() !== String(h.name).trim()) {
+        throw new Error('Type the household name exactly to delete it.');
+      }
+      ['members', 'sessions', 'chores', 'groups', 'prizes', 'redemptions']
+        .forEach(function (k) {
+          DB[k] = DB[k].filter(function (r) {
+            return r.householdId !== h.householdId;
+          });
+        });
+      DB.households = DB.households.filter(function (x) {
+        return x.householdId !== h.householdId;
+      });
+      return overview();
     },
 
     loadGroups: function (p) {

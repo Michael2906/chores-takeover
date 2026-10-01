@@ -283,7 +283,8 @@ strong, b { font-weight: 800; }
 .screen { min-height: 100vh; min-height: 100dvh; }
 
 #gate,
-#picker {
+#picker,
+#admin {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -301,6 +302,49 @@ strong, b { font-weight: 800; }
 
 .gate-card   { width: min(26rem, 100%); }
 .picker-card { width: min(42rem, 100%); }
+
+/* -------------------------------------------------------------------
+   The global admin page
+   ------------------------------------------------------------------- */
+.admin-card {
+  width: min(56rem, 100%);
+  max-height: 92vh;
+  max-height: 92dvh;
+  overflow-y: auto;
+}
+
+.admin-who {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  background: var(--ink);
+  color: var(--paper);
+  padding: 0.1rem var(--spacing-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* The bar that says whose seat this is. Violet, because it is the one
+   colour the board itself never uses for a chore state -- so a borrowed
+   session cannot be mistaken for anything that belongs to the household. */
+.admin-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--violet);
+  color: var(--paper);
+  border-bottom: var(--border);
+  font-weight: 800;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  flex: none;
+  z-index: 11;
+}
 
 .gate-tagline {
   text-align: center;
