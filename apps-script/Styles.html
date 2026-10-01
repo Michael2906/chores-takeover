@@ -1147,15 +1147,19 @@ strong, b { font-weight: 800; }
    Approve is a real request the server has to refuse.
    ------------------------------------------------------------------- */
 
-/* A bar across the top of the board whenever any call is in flight. */
+/* A bar across the top of the WINDOW whenever any call is in flight. Fixed,
+   not absolute: it lives outside the three screens so that it also covers the
+   name list and the sign-in form. */
 .progress {
-  position: absolute;
+  position: fixed;
   top: 0; left: 0; right: 0;
   height: 6px;
   background: var(--ink);
   overflow: hidden;
   z-index: 30;
 }
+
+.progress { z-index: 70; }
 
 .progress span {
   display: block;
@@ -1209,6 +1213,53 @@ strong, b { font-weight: 800; }
   box-shadow: 0 0 0 var(--ink);
 }
 
+/* Picking a name is two round trips -- the pick, then the whole board -- and
+   on a cold Apps Script container that is seconds with nothing on screen. The
+   tile that was tapped spins; the rest of the grid goes quiet so nobody
+   starts a second one underneath it. */
+.member-grid.is-waiting { pointer-events: none; }
+.member-grid.is-waiting .member-tile:not(.is-busy) { opacity: 0.4; }
+
+.member-tile.is-busy { position: relative; }
+
+.member-tile.is-busy::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 253, 247, 0.72);
+  z-index: 1;
+}
+
+.member-tile.is-busy::before {
+  content: "";
+  position: absolute;
+  left: 50%; top: 50%;
+  width: 2rem; height: 2rem;
+  margin: -1rem 0 0 -1rem;
+  border: 0.28rem solid var(--ink);
+  border-top-color: var(--lime);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  z-index: 2;
+}
+
+/* Same problem on the PIN pad: OK has a password hash and a board load
+   behind it, and an unresponsive OK key is what makes somebody press it
+   four more times. */
+.pin-pad.is-checking { pointer-events: none; opacity: 0.5; }
+.pin-key.is-busy { background: var(--lime); }
+
+.pin-dots.is-checking::after {
+  content: "";
+  width: 1.1rem;
+  height: 1.1rem;
+  border: 0.2rem solid var(--ink);
+  border-top-color: var(--lime);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  margin-left: var(--spacing-xs);
+}
+
 /* Covers the board while a big rebuild lands (filling the trough). */
 .working {
   position: absolute;
@@ -1241,9 +1292,48 @@ strong, b { font-weight: 800; }
   flex-wrap: wrap;
 }
 
-.list-row .grow { flex: 1; min-width: 7rem; }
-.list-row .t { font-weight: 800; }
+/* A column, not a run of <br>s. The rows carry a title, a sub-line and two
+   little tags, and on a phone the old inline version left the buttons
+   stranded on a line of their own with a gap above them. */
+.list-row .grow {
+  flex: 1 1 10rem;
+  min-width: 7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.list-row .t { font-weight: 800; line-height: 1.2; }
 .list-row .sub { font-size: 0.78rem; color: var(--ink-soft); font-weight: 600; }
+
+/* Who an item is aimed at, and when it comes round. */
+.row-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+  margin-top: 0.15rem;
+}
+
+.row-tag {
+  background: var(--bone);
+  border: 1px solid var(--ink);
+  border-radius: var(--pill);
+  padding: 0 0.45rem;
+  font-size: 0.66rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+/* Edit and Remove travel together, so a narrow row wraps them as a pair
+   rather than dropping one of them onto its own line. */
+.row-acts {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  flex: none;
+}
 
 .cost {
   background: var(--sun);

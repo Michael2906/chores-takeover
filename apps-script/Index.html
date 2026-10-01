@@ -18,6 +18,13 @@
   <body>
     <?!= include('Images'); ?>
 
+    <!-- Shows whenever anything is in flight. See the note in Scripts.
+         It sits OUTSIDE the three screens on purpose: it used to live inside
+         #app, which meant the one place it could never appear was the name
+         list -- where tapping somebody with no PIN gave no sign at all that
+         anything was happening. -->
+    <div id="progress" class="progress" hidden><span></span></div>
+
     <!-- Shown until the first resumeSession() answers, so nobody sees the
          sign-in form flash up before we know they are already signed in. -->
     <div id="splash" class="splash">
@@ -115,9 +122,6 @@
          Screen 3: the board
          ============================================================ -->
     <div id="app" class="screen app" hidden>
-      <!-- Shows whenever anything is in flight. See the note in Scripts. -->
-      <div id="progress" class="progress" hidden><span></span></div>
-
       <header id="header">
         <div class="brand">
           <div class="brand-mark" id="header-logo"></div>

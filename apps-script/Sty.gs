@@ -4,32 +4,52 @@
  * The other daily list, and the opposite of the Trough.
  *
  *   The Trough   one chore, one person. Shared out, balanced, no repeats.
- *   The Sty      one chore, EVERYBODY. Nobody can do it for anyone else.
+ *   The Sty      one chore, EVERYBODY it is aimed at. Nobody can do it for
+ *                anyone else.
  *
  * It is for the chores that are each person's own -- their bed, their room,
- * their washing. There is nothing to balance and nothing to randomise: if
- * "put your laundry away" is on the list, everybody gets "put your laundry
- * away" every day.
+ * their washing, their homework. There is nothing to balance and nothing to
+ * randomise: if "put your laundry away" is on the list, everybody it is aimed
+ * at gets "put your laundry away".
+ *
+ * Two things narrow it, and both are per item:
+ *
+ *   WHO     everyone, a named group, or specific people. Homework goes to the
+ *           children; nobody else in the house has any. See Groups.gs.
+ *
+ *   WHICH   the days of the week it goes out. Homework is Monday to Thursday.
+ *   DAYS    Blank means every day, which is what the list used to be.
+ *
+ * Neither of them touches work already owed. A Thursday homework chore that
+ * nobody did is still owed on Friday and stays on the board: the day list
+ * only decides whether a NEW one is posted. That is the carry-over, and it is
+ * the behaviour you want -- not doing it does not make it go away.
  *
  * Both lists are standing lists. Anything added stays until it is taken off.
  */
 
-/** Everything on the list. */
+/** Everything on the list, in the shape the client renders and edits. */
 function styItems(householdId) {
   return findAll(CONFIG.SHEET_STY, { householdId: householdId })
     .filter(function (t) { return String(t.active) !== 'false'; })
     .map(function (t) {
-      return {
+      var out = {
         styId: t.styId,
         title: t.title,
         notes: t.notes || '',
         category: t.category || '',
-        points: Number(t.points || 0)
+        points: Number(t.points || 0),
+        days: csvToList(t.days).map(Number)
       };
+      var who = publicAudience(t);
+      out.audience = who.audience;
+      out.groupId = who.groupId;
+      out.memberIds = who.memberIds;
+      return out;
     });
 }
 
-/** The list, plus what today's hand-out produced. */
+/** The list, plus what today's hand-out produced and what it can be aimed at. */
 function loadSty(payload) {
   payload = payload || {};
   var me = requireMember(payload.memberToken);
@@ -39,7 +59,11 @@ function loadSty(payload) {
     items: styItems(me.householdId),
     parentsToo: CONFIG.STY_PARENTS_TOO !== false,
     handedOutToday: countStyToday(me.householdId),
-    canEdit: me.role === 'owner'
+    canEdit: me.role === 'owner',
+    // So the form can draw the "who gets it" picker without a second call.
+    groups: groupsFor(me.householdId),
+    members: activeMembers(me.householdId),
+    weekdays: CONFIG.WEEKDAYS
   };
 }
 
@@ -59,6 +83,8 @@ function addStyItem(payload) {
   var title = String(payload.title || '').trim();
   if (!title) throw new Error('Give the chore a name.');
 
+  var who = audienceFromPayload(me.householdId, payload);
+
   insert(CONFIG.SHEET_STY, {
     styId: newId('y'),
     householdId: me.householdId,
@@ -67,7 +93,11 @@ function addStyItem(payload) {
     category: String(payload.category || '').slice(0, 40),
     points: Math.max(0, Math.min(999, Math.round(Number(payload.points) || 0))),
     active: true,
-    createdAt: stamp()
+    createdAt: stamp(),
+    audience: who.audience,
+    groupId: who.groupId,
+    memberIds: who.memberIds,
+    days: cleanDaysCsv(payload.days)
   });
   logAction(me.householdId, '', me.memberId, 'sty_added', title);
 
@@ -95,6 +125,13 @@ function updateStyItem(payload) {
     changes.points = Math.max(0, Math.min(999,
                               Math.round(Number(payload.points) || 0)));
   }
+  if (payload.audience !== undefined) {
+    var who = audienceFromPayload(me.householdId, payload);
+    changes.audience = who.audience;
+    changes.groupId = who.groupId;
+    changes.memberIds = who.memberIds;
+  }
+  if (payload.days !== undefined) changes.days = cleanDaysCsv(payload.days);
 
   update(CONFIG.SHEET_STY, t, changes);
   logAction(me.householdId, '', me.memberId, 'sty_edited', t.title);
@@ -116,27 +153,53 @@ function removeStyItem(payload) {
   return loadSty(payload);
 }
 
+/**
+ * Keeps only real weekday numbers, de-duplicated and in week order.
+ *
+ * Returns '' for "all seven" as well as for "none given": a chore ticked for
+ * every day of the week and a chore with no day set are the same chore, and
+ * storing them the same way means there is only one case to read later.
+ */
+function cleanDaysCsv(v) {
+  var seen = {};
+  csvToList(v).forEach(function (d) {
+    var n = Number(d);
+    if (n >= 0 && n <= 6) seen[n] = true;
+  });
+  var days = Object.keys(seen).map(Number).sort(function (a, b) { return a - b; });
+  return days.length === 0 || days.length === 7 ? '' : days.join(',');
+}
+
 // ---------------------------------------------------------------------
 // The hand-out
 // ---------------------------------------------------------------------
 
 /**
- * Gives every item on the list to every eligible person.
+ * Gives every item that runs today to everybody it is aimed at.
  *
  * Called by the nightly job, not by a button. Returns how many chores it
  * wrote so the job can log something useful.
  */
 function fillStyFor(householdId, actorId) {
-  var items = styItems(householdId);
+  var today = todayStr();
+
+  var items = styItems(householdId).filter(function (i) {
+    return styRunsToday(i, today);
+  });
   if (!items.length) return 0;
 
-  var people = findAll(CONFIG.SHEET_MEMBERS, { householdId: householdId })
-    .filter(function (m) {
-      if (String(m.active) === 'false') return false;
-      if (CONFIG.STY_PARENTS_TOO === false && canApprove(m)) return false;
-      return true;
-    });
-  if (!people.length) return 0;
+  var active = findAll(CONFIG.SHEET_MEMBERS, { householdId: householdId })
+    .filter(function (m) { return String(m.active) !== 'false'; });
+  if (!active.length) return 0;
+
+  // STY_PARENTS_TOO only speaks for items aimed at EVERYONE. An item aimed at
+  // a group or at named people has already said who it is for, and a global
+  // setting has no business second-guessing that.
+  var forEveryone = CONFIG.STY_PARENTS_TOO === false
+    ? active.filter(function (m) { return !canApprove(m); })
+    : active;
+
+  var groupIndex = groupIndexFor(householdId);
 
   // Unfinished Sty chores carry over the same way the Trough's do, but PER
   // PERSON: this list is everybody's, so Ellie still owing yesterday's bed
@@ -150,12 +213,15 @@ function fillStyFor(householdId, actorId) {
       }
     });
 
-  var today = todayStr();
   var nextRef = refAllocator(householdId);
   var written = 0;
 
-  people.forEach(function (m) {
-    items.forEach(function (item) {
+  items.forEach(function (item) {
+    var pool = String(item.audience || 'everyone') === 'everyone'
+      ? forEveryone
+      : audienceMembers(item, active, groupIndex);
+
+    pool.forEach(function (m) {
       if (owed[m.memberId + '|' + item.styId]) return;
       insert(CONFIG.SHEET_CHORES, {
         choreId: newId('c'),

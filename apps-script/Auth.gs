@@ -145,9 +145,10 @@ function noteSuccess(sheet, rec) {
 
 /** Issues a session row and returns its token. */
 function openSession(kind, householdId, memberId, deviceLabel) {
-  var ms = kind === 'household'
-    ? CONFIG.SESSION_DAYS * 24 * 3600 * 1000
-    : CONFIG.MEMBER_SESSION_HOURS * 3600 * 1000;
+  var days = kind === 'household'
+    ? Number(CONFIG.SESSION_DAYS)
+    : Number(CONFIG.MEMBER_SESSION_DAYS);
+  var ms = (days || 1) * 24 * 3600 * 1000;
 
   var token = randomToken(24);
   insert(CONFIG.SHEET_SESSIONS, {
@@ -419,12 +420,77 @@ function resumeSession(payload) {
   return out;
 }
 
-/** Forgets this device entirely: back to the email and password screen. */
+/**
+ * Forgets this device entirely: back to the email and password screen.
+ *
+ * Gated by the household password for the same reason releaseMember() is,
+ * and it has to be. Left open it is simply the long way round the switch
+ * lock: a child who cannot become somebody else signs the device out
+ * instead, and the tablet is unusable until a parent types the password --
+ * which is the thing they were trying to avoid needing.
+ *
+ * With nobody signed in there is nothing to escape, so the password is not
+ * asked for. That keeps "wrong household" usable on a device that has just
+ * been signed in to the wrong account.
+ */
 function signOutDevice(payload) {
   payload = payload || {};
+
+  if (hasLiveMember(payload.memberToken)) {
+    requireHouseholdPassword(payload.householdToken, payload.password);
+  }
+
   if (payload.memberToken) closeSession(payload.memberToken);
   if (payload.householdToken) closeSession(payload.householdToken);
   return { ok: true };
+}
+
+// ---------------------------------------------------------------------
+// Proving you are the account holder, mid-session
+// ---------------------------------------------------------------------
+
+/**
+ * Re-checks the household password on a device that is already trusted.
+ *
+ * This is what stops the tablet from being a free-for-all. Device trust lasts
+ * SESSION_DAYS and the person who picked their name now stays picked for just
+ * as long, so the only two ways the active person changes are: a parent types
+ * the password, or the device is signed out entirely -- which also costs the
+ * password. Both doors, one key.
+ *
+ * It is asked of EVERYBODY, the account holder included. Making the owner
+ * exempt would mean an owner account with no PIN could be tapped by anyone at
+ * the name list and then used to switch freely, which is the hole this is
+ * here to close.
+ *
+ * Failures are counted against the household row, so guessing at the switch
+ * prompt locks out the same way guessing at the sign-in screen does.
+ */
+function requireHouseholdPassword(householdToken, password) {
+  var hs = readSession(householdToken, 'household');
+  if (!hs) throw new Error('SIGNED_OUT');
+
+  var h = findOne(CONFIG.SHEET_HOUSEHOLDS, { householdId: hs.householdId });
+  if (!h) throw new Error('SIGNED_OUT');
+
+  // A distinct signal, so the client can put the prompt up rather than
+  // showing "wrong password" to somebody who has not typed one yet.
+  if (!password) throw new Error('PASSWORD_REQUIRED');
+
+  assertNotLocked(h);
+
+  if (!safeEqual(hashSecret(String(password), h.passwordSalt), h.passwordHash)) {
+    noteFailure(CONFIG.SHEET_HOUSEHOLDS, h);
+    throw new Error('That is not the household password.');
+  }
+  noteSuccess(CONFIG.SHEET_HOUSEHOLDS, h);
+  return h;
+}
+
+/** Is somebody currently the active person on this device? */
+function hasLiveMember(memberToken) {
+  if (!memberToken) return false;
+  return !!readSession(memberToken, 'member');
 }
 
 // ---------------------------------------------------------------------
@@ -470,9 +536,25 @@ function pickMember(payload) {
   };
 }
 
-/** Steps back to the name list without forgetting the device. */
+/**
+ * Steps back to the name list without forgetting the device.
+ *
+ * Costs the household password while somebody is signed in -- that is the
+ * whole lock. With nobody signed in there is nothing to step back FROM
+ * (the device has just been trusted and is showing the name list anyway), so
+ * asking for it there would be a prompt that protects nothing.
+ */
 function releaseMember(payload) {
   payload = payload || {};
+
+  if (hasLiveMember(payload.memberToken)) {
+    requireHouseholdPassword(payload.householdToken, payload.password);
+    var m = null;
+    try { m = requireMember(payload.memberToken); } catch (err) { /* gone */ }
+    logAction(m ? m.householdId : '', '', m ? m.memberId : '',
+              'member_switched', m ? m.name : '');
+  }
+
   if (payload.memberToken) closeSession(payload.memberToken);
   return { ok: true };
 }

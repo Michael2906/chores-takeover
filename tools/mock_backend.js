@@ -21,6 +21,7 @@
     chores: [],
     trough: [],
     sty: [],
+    groups: [],
     prizes: [],
     redemptions: []
   };
@@ -89,6 +90,13 @@
     });
 
     var m = DB.members;
+
+    // "The Kids" -- what the seeded homework and bin chores are aimed at.
+    DB.groups.push({
+      groupId: 'gr1', householdId: h.householdId, name: 'The Kids',
+      memberIds: [m[2].memberId, m[3].memberId]
+    });
+
     var today = new Date();
     var day = function (n) {
       var d = new Date(today); d.setDate(d.getDate() + n);
@@ -137,19 +145,30 @@
   }
   // The daily list and a stocked prize pen, so both screens have something
   // in them the moment the preview opens.
+  // Seeded across the whole range of audiences and schedules, so every
+  // branch of the two forms has something to look at on first open.
   DB.trough = [
-    { troughId: 'tr1', title: 'Load the dishwasher', category: 'Kitchen', points: 3, notes: '' },
-    { troughId: 'tr2', title: 'Take the trash cans out', category: 'Trash', points: 2, notes: '' },
-    { troughId: 'tr3', title: 'Feed the pets',       category: 'Pets',    points: 2, notes: '' },
-    { troughId: 'tr4', title: 'Tidy the living room', category: 'Living Areas', points: 4, notes: '' },
-    { troughId: 'tr5', title: 'Vacuum the stairs',   category: 'Living Areas', points: 6, notes: '' },
-    { troughId: 'tr6', title: 'Make your bed',       category: 'Bedroom', points: 1, notes: '' }
+    { troughId: 'tr1', title: 'Load the dishwasher', category: 'Kitchen', points: 3, notes: '',
+      audience: 'everyone', groupId: '', memberIds: [], frequency: 'daily', onDay: 0 },
+    { troughId: 'tr2', title: 'Take the trash cans out', category: 'Trash', points: 2, notes: '',
+      audience: 'group', groupId: 'gr1', memberIds: [], frequency: 'weekly', onDay: 2 },
+    { troughId: 'tr3', title: 'Feed the pets',       category: 'Pets',    points: 2, notes: '',
+      audience: 'everyone', groupId: '', memberIds: [], frequency: 'daily', onDay: 0 },
+    { troughId: 'tr4', title: 'Tidy the living room', category: 'Living Areas', points: 4, notes: '',
+      audience: 'group', groupId: 'gr1', memberIds: [], frequency: 'daily', onDay: 0 },
+    { troughId: 'tr5', title: 'Vacuum the stairs',   category: 'Living Areas', points: 6, notes: '',
+      audience: 'everyone', groupId: '', memberIds: [], frequency: 'fortnightly', onDay: 6 },
+    { troughId: 'tr6', title: 'Clean out the car',   category: 'Vehicle', points: 10, notes: '',
+      audience: 'everyone', groupId: '', memberIds: [], frequency: 'monthly', onDay: 1 }
   ];
 
   DB.sty = [
-    { styId: 'sy1', title: 'Make your bed',        category: 'Bedroom', points: 1, notes: '' },
-    { styId: 'sy2', title: 'Put your laundry away', category: 'Laundry', points: 2, notes: '' },
-    { styId: 'sy3', title: 'Clean your room',      category: 'Bedroom', points: 5, notes: '' }
+    { styId: 'sy1', title: 'Make your bed',        category: 'Bedroom', points: 1, notes: '',
+      audience: 'everyone', groupId: '', memberIds: [], days: [] },
+    { styId: 'sy2', title: 'Put your laundry away', category: 'Laundry', points: 2, notes: '',
+      audience: 'everyone', groupId: '', memberIds: [], days: [] },
+    { styId: 'sy3', title: 'Do your homework',     category: 'School',  points: 5, notes: '',
+      audience: 'group', groupId: 'gr1', memberIds: [], days: [1, 2, 3, 4] }
   ];
 
   DB.prizes = [
@@ -243,7 +262,9 @@
   var CHILD_WEIGHT = 2;
 
   /** The same target-share algorithm as Trough.gs. */
-  function planTrough(items, people, recent) {
+  function planTrough(items, people, recent, poolFor) {
+    poolFor = poolFor || function () { return people; };
+
     var queue = shuffle(items.slice()).sort(function (a, b) {
       return Number(b.points || 0) - Number(a.points || 0);
     });
@@ -266,8 +287,11 @@
     var plan = [];
     queue.forEach(function (item) {
       var blocked = recent[item.troughId] || {};
-      var elig = people.filter(function (m) { return !blocked[m.memberId]; });
-      if (!elig.length) elig = people.slice();
+      var pool = poolFor(item);
+      if (!pool.length) return;
+
+      var elig = pool.filter(function (m) { return !blocked[m.memberId]; });
+      if (!elig.length) elig = pool.slice();
       elig = shuffle(elig);
 
       var best = elig[0], bestNeed = target[best.memberId] - given[best.memberId];
@@ -351,6 +375,88 @@
   }
 
   // ---------------------------------------------------------------
+  // Groups, audiences and schedules -- mirroring Groups.gs
+  // ---------------------------------------------------------------
+
+  function listOf(v) {
+    if (!v) return [];
+    var parts = Array.isArray(v) ? v : String(v).split(',');
+    return parts.map(function (x) { return String(x).trim(); })
+                .filter(Boolean);
+  }
+
+  function groupViews(hid) {
+    return DB.groups.filter(function (g) { return g.householdId === hid; })
+      .map(function (g) {
+        return { groupId: g.groupId, name: g.name,
+                 memberIds: g.memberIds.slice() };
+      });
+  }
+
+  function applyAudience(item, p, hid) {
+    var kind = String(p.audience || 'everyone');
+
+    if (kind === 'group') {
+      var g = find(DB.groups, 'groupId', String(p.groupId || ''));
+      if (!g || g.householdId !== hid) throw new Error('Pick a group.');
+      item.audience = 'group';
+      item.groupId = g.groupId;
+      item.memberIds = [];
+      return;
+    }
+    if (kind === 'people') {
+      var ids = listOf(p.memberIds);
+      if (!ids.length) throw new Error('Pick at least one person.');
+      item.audience = 'people';
+      item.groupId = '';
+      item.memberIds = ids;
+      return;
+    }
+    item.audience = 'everyone';
+    item.groupId = '';
+    item.memberIds = [];
+  }
+
+  function applySchedule(item, p) {
+    var freq = String(p.frequency || 'daily');
+    if (['daily', 'weekly', 'fortnightly', 'monthly'].indexOf(freq) < 0) {
+      freq = 'daily';
+    }
+    item.frequency = freq;
+    if (freq === 'weekly' || freq === 'fortnightly') {
+      item.onDay = Math.max(0, Math.min(6, Math.round(Number(p.onDay) || 0)));
+    } else if (freq === 'monthly') {
+      item.onDay = Math.max(1, Math.min(28, Math.round(Number(p.onDay) || 1)));
+    } else {
+      item.onDay = 0;
+    }
+  }
+
+  function cleanDays(v) {
+    var seen = {};
+    listOf(v).forEach(function (d) {
+      var n = Number(d);
+      if (n >= 0 && n <= 6) seen[n] = true;
+    });
+    var days = Object.keys(seen).map(Number)
+      .sort(function (a, b) { return a - b; });
+    return (days.length === 0 || days.length === 7) ? [] : days;
+  }
+
+  /** The household password, re-checked mid-session. */
+  function gateHouseholdPassword(p) {
+    var s = session(p.householdToken, 'household');
+    if (!s) throw new Error('SIGNED_OUT');
+    var h = find(DB.households, 'householdId', s.householdId);
+    if (!h) throw new Error('SIGNED_OUT');
+    if (!p.password) throw new Error('PASSWORD_REQUIRED');
+    if (String(p.password) !== String(h.password)) {
+      throw new Error('That is not the household password.');
+    }
+    return h;
+  }
+
+  // ---------------------------------------------------------------
   // Actions
   // ---------------------------------------------------------------
   var ACTIONS = {
@@ -404,6 +510,7 @@
     },
 
     signOutDevice: function (p) {
+      if (session(p.memberToken, 'member')) gateHouseholdPassword(p);
       DB.sessions = DB.sessions.filter(function (s) {
         return s.token !== p.householdToken && s.token !== p.memberToken;
       });
@@ -427,8 +534,63 @@
     },
 
     releaseMember: function (p) {
+      // Mirrors the real gate: changing who is on this device costs the
+      // household password, but only while somebody is actually on it.
+      if (session(p.memberToken, 'member')) gateHouseholdPassword(p);
       DB.sessions = DB.sessions.filter(function (s) { return s.token !== p.memberToken; });
       return { ok: true };
+    },
+
+    loadGroups: function (p) {
+      var me = requireMember(p.memberToken);
+      return {
+        groups: groupViews(me.householdId),
+        members: activeMembers(me.householdId),
+        canEdit: me.role === 'owner'
+      };
+    },
+
+    addGroup: function (p) {
+      var me = requireOwner(p.memberToken);
+      var name = String(p.name || '').trim();
+      if (!name) throw new Error('Give the group a name.');
+      if (groupViews(me.householdId).some(function (g) {
+            return g.name.toLowerCase() === name.toLowerCase();
+          })) {
+        throw new Error('There is already a group called ' + name + '.');
+      }
+      DB.groups.push({ groupId: id('gr'), householdId: me.householdId,
+                       name: name, memberIds: listOf(p.memberIds) });
+      return ACTIONS.loadGroups(p);
+    },
+
+    updateGroup: function (p) {
+      var me = requireOwner(p.memberToken);
+      var g = find(DB.groups, 'groupId', p.groupId);
+      if (!g || g.householdId !== me.householdId) {
+        throw new Error('That group is not in this household.');
+      }
+      if (p.name !== undefined) g.name = String(p.name).trim() || g.name;
+      if (p.memberIds !== undefined) g.memberIds = listOf(p.memberIds);
+      return ACTIONS.loadGroups(p);
+    },
+
+    removeGroup: function (p) {
+      var me = requireOwner(p.memberToken);
+      var g = find(DB.groups, 'groupId', p.groupId);
+      if (!g || g.householdId !== me.householdId) {
+        throw new Error('That group is not in this household.');
+      }
+      var used = DB.trough.concat(DB.sty).filter(function (t) {
+        return t.audience === 'group' && String(t.groupId) === String(g.groupId);
+      }).length;
+      if (used && !p.force) {
+        throw new Error('That group is used by ' + used +
+          (used === 1 ? ' chore' : ' chores') +
+          '. Point those somewhere else first, or delete it anyway.');
+      }
+      DB.groups = DB.groups.filter(function (x) { return x.groupId !== g.groupId; });
+      return ACTIONS.loadGroups(p);
     },
 
     addMember: function (p) {
@@ -659,27 +821,36 @@
         items: DB.trough.slice(),
         lastFilled: last,
         canEdit: me.role === 'owner',
-        canFill: me.role === 'owner' || m_role_approver(me)
+        canFill: me.role === 'owner' || m_role_approver(me),
+        groups: groupViews(me.householdId),
+        members: activeMembers(me.householdId),
+        frequencies: ['daily', 'weekly', 'fortnightly', 'monthly'],
+        weekdays: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
       };
     },
 
     addTroughItem: function (p) {
-      requireOwner(p.memberToken);
+      var me = requireOwner(p.memberToken);
       if (!String(p.title || '').trim()) throw new Error('Give the chore a name.');
-      DB.trough.push({ troughId: id('tr'), title: String(p.title).trim(),
+      var item = { troughId: id('tr'), title: String(p.title).trim(),
         category: p.category || '', points: Math.max(0, Number(p.points) || 0),
-        notes: '' });
+        notes: '', createdAt: now() };
+      applyAudience(item, p, me.householdId);
+      applySchedule(item, p);
+      DB.trough.push(item);
       return ACTIONS.loadTrough(p);
     },
 
     updateTroughItem: function (p) {
-      requireOwner(p.memberToken);
+      var me = requireOwner(p.memberToken);
       var t = find(DB.trough, 'troughId', p.troughId);
       if (!t) throw new Error('That is not on your list.');
       if (p.title !== undefined) t.title = String(p.title).trim() || t.title;
       if (p.points !== undefined) t.points = Math.max(0, Number(p.points) || 0);
       if (p.category !== undefined) t.category = p.category;
       if (p.notes !== undefined) t.notes = p.notes;
+      if (p.audience !== undefined) applyAudience(t, p, me.householdId);
+      if (p.frequency !== undefined) applySchedule(t, p);
       return ACTIONS.loadTrough(p);
     },
 
@@ -698,27 +869,35 @@
         handedOutToday: DB.chores.filter(function (c) {
           return c.styId && c.dueDate === today();
         }).length,
-        canEdit: me.role === 'owner'
+        canEdit: me.role === 'owner',
+        groups: groupViews(me.householdId),
+        members: activeMembers(me.householdId),
+        weekdays: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
       };
     },
 
     addStyItem: function (p) {
-      requireOwner(p.memberToken);
+      var me = requireOwner(p.memberToken);
       if (!String(p.title || '').trim()) throw new Error('Give the chore a name.');
-      DB.sty.push({ styId: id('sy'), title: String(p.title).trim(),
+      var item = { styId: id('sy'), title: String(p.title).trim(),
         category: p.category || '', points: Math.max(0, Number(p.points) || 0),
-        notes: '' });
+        notes: '', createdAt: now() };
+      applyAudience(item, p, me.householdId);
+      item.days = cleanDays(p.days);
+      DB.sty.push(item);
       return ACTIONS.loadSty(p);
     },
 
     updateStyItem: function (p) {
-      requireOwner(p.memberToken);
+      var me = requireOwner(p.memberToken);
       var t = find(DB.sty, 'styId', p.styId);
       if (!t) throw new Error('That is not on your list.');
       if (p.title !== undefined) t.title = String(p.title).trim() || t.title;
       if (p.points !== undefined) t.points = Math.max(0, Number(p.points) || 0);
       if (p.category !== undefined) t.category = p.category;
       if (p.notes !== undefined) t.notes = p.notes;
+      if (p.audience !== undefined) applyAudience(t, p, me.householdId);
+      if (p.days !== undefined) t.days = cleanDays(p.days);
       return ACTIONS.loadSty(p);
     },
 
@@ -751,7 +930,8 @@
         prizes: DB.prizes.map(function (x) {
           var stock = x.stock === '' ? null : Number(x.stock);
           return { prizeId: x.prizeId, name: x.name, notes: x.notes,
-            cost: Number(x.cost || 0), stock: stock,
+            cost: Number(x.cost || 0),
+            limited: stock !== null, stock: stock === null ? 0 : stock,
             soldOut: stock !== null && stock <= 0,
             affordable: Number(me.points || 0) >= Number(x.cost || 0) };
         }).sort(function (a, b) { return a.cost - b.cost; }),
@@ -938,17 +1118,21 @@
 
     var n = 0, carried = 0;
 
+    var poolFor = function (item) { return audienceOf(item, people); };
+
     var items = DB.trough.filter(function (i) {
       if (troughOpen[i.troughId]) { carried++; return false; }
-      return true;
+      if (!dueToday(i)) return false;
+      return poolFor(i).length > 0;
     });
-    planTrough(items, people, recent).forEach(function (row) {
+    planTrough(items, people, recent, poolFor).forEach(function (row) {
       DB.chores.push(mkChore(h, row.item, row.member, row.item.troughId, ''));
       n++;
     });
 
-    people.forEach(function (m) {
-      DB.sty.forEach(function (item) {
+    DB.sty.forEach(function (item) {
+      if (!runsToday(item)) return;
+      audienceOf(item, people).forEach(function (m) {
         if (styOwed[m.memberId + '|' + item.styId]) { carried++; return; }
         DB.chores.push(mkChore(h, item, m, '', item.styId));
         n++;
@@ -985,6 +1169,51 @@
     h.lastFilledOn = today();
     return { filled: n, carriedOver: carried, reposted: reposted };
   };
+
+  /** Mirrors audienceMembers() in Groups.gs. */
+  function audienceOf(item, people) {
+    var kind = String(item.audience || 'everyone');
+
+    if (kind === 'group') {
+      var g = find(DB.groups, 'groupId', String(item.groupId || ''));
+      if (!g) return [];
+      return people.filter(function (m) {
+        return g.memberIds.indexOf(m.memberId) >= 0;
+      });
+    }
+    if (kind === 'people') {
+      var ids = item.memberIds || [];
+      return people.filter(function (m) { return ids.indexOf(m.memberId) >= 0; });
+    }
+    return people.slice();
+  }
+
+  /** Mirrors styRunsToday() in Daily.gs. */
+  function runsToday(item) {
+    var days = item.days || [];
+    if (!days.length) return true;
+    return days.indexOf(new Date(today() + 'T12:00:00').getDay()) >= 0;
+  }
+
+  /** Mirrors troughDueToday() in Daily.gs. */
+  function dueToday(item) {
+    var f = String(item.frequency || 'daily');
+    if (f === 'daily') return true;
+
+    var d = new Date(today() + 'T12:00:00');
+    var onDay = Number(item.onDay || 0);
+
+    if (f === 'weekly') return d.getDay() === onDay;
+    if (f === 'fortnightly') {
+      if (d.getDay() !== onDay) return false;
+      var week = Math.floor((Math.floor(d.getTime() / 86400000) + 4) / 7);
+      return week % 2 === 0;
+    }
+    if (f === 'monthly') {
+      return d.getDate() === Math.max(1, Math.min(28, onDay));
+    }
+    return true;
+  }
 
   /** Mirrors seriesDate() in Daily.gs. */
   function seriesDate(c) {

@@ -90,6 +90,12 @@ function actions() {
     assignChore:    assignChore,
     reopenChore:    reopenChore,
 
+    // Named groups of people, used by both daily lists
+    loadGroups:   loadGroups,
+    addGroup:     addGroup,
+    updateGroup:  updateGroup,
+    removeGroup:  removeGroup,
+
     // The Trough -- the daily hand-out
     loadTrough:       loadTrough,
     addTroughItem:    addTroughItem,

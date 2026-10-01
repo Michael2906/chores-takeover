@@ -53,14 +53,27 @@ function schema(name) {
     ];
     // The daily list itself -- templates, not chores. Filling the trough
     // copies these into real Chores rows.
+    //
+    // The last five are appended, so a sheet written before they existed
+    // reads them blank -- and blank is the old behaviour in every case:
+    // audience '' means everyone, frequency '' means daily.
     _schema[CONFIG.SHEET_TROUGH] = [
       'troughId', 'householdId', 'title', 'notes', 'category', 'points',
-      'active', 'createdAt'
+      'active', 'createdAt',
+      'audience', 'groupId', 'memberIds', 'frequency', 'onDay'
     ];
     // Same shape as the Trough, but handed to everybody rather than shared.
+    // 'days' is a CSV of weekday numbers, Sunday 0; blank means every day.
     _schema[CONFIG.SHEET_STY] = [
       'styId', 'householdId', 'title', 'notes', 'category', 'points',
-      'active', 'createdAt'
+      'active', 'createdAt',
+      'audience', 'groupId', 'memberIds', 'days'
+    ];
+    // Named sets of people, so "the kids" is said once and then reused by
+    // every item on both lists. memberIds is a CSV; the group is resolved at
+    // hand-out time, so editing who is in it changes every item that uses it.
+    _schema[CONFIG.SHEET_GROUPS] = [
+      'groupId', 'householdId', 'name', 'memberIds', 'createdAt'
     ];
     _schema[CONFIG.SHEET_PRIZES] = [
       'prizeId', 'householdId', 'name', 'notes', 'cost', 'stock',

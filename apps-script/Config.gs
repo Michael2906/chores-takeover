@@ -29,6 +29,7 @@ var CONFIG = {
   SHEET_CHORES:     'Chores',
   SHEET_TROUGH:     'Trough',
   SHEET_STY:        'Sty',
+  SHEET_GROUPS:     'Groups',
   SHEET_PRIZES:     'Prizes',
   SHEET_REDEEMED:   'Redemptions',
   SHEET_LOG:        'Activity Log',
@@ -42,10 +43,16 @@ var CONFIG = {
   SESSION_DAYS: 60,
 
   // How long the person who picked their name stays the active user on that
-  // device. When it lapses they re-pick from the name list (and re-enter their
-  // PIN if they have one). Every action is checked against this, not against
-  // whatever name the browser claims -- so a shorter window is a real gate.
-  MEMBER_SESSION_HOURS: 12,
+  // device. Every action is checked against this, not against whatever name
+  // the browser claims.
+  //
+  // This matches SESSION_DAYS on purpose. The old value was 12 HOURS, which
+  // meant the tablet dropped back to the name list twice a day and whoever
+  // picked next could pick anybody -- so "who is using this device" was
+  // really decided by whoever got there first. Now the pick sticks for as
+  // long as the device is trusted, and CHANGING it costs the household
+  // password. See requireHouseholdPassword() in Auth.gs.
+  MEMBER_SESSION_DAYS: 60,
 
   // Wrong-password / wrong-PIN attempts allowed before that account is frozen
   // for LOCKOUT_MINUTES. Applies per household account and per sub-account.
@@ -125,7 +132,26 @@ var CONFIG = {
 
   // Nobody gets the same trough chore two days running. Raise this to widen
   // the gap -- 2 means "not yesterday or the day before".
+  //
+  // This is a DATE window, which on its own does nothing for a weekly or
+  // monthly chore: the last hand-out was seven days ago and falls outside
+  // it, so the same child could have the bins every week forever. The
+  // hand-out therefore also excludes whoever had the PREVIOUS instance of
+  // that same item, however long ago it was. See fillTroughFor().
   NO_REPEAT_DAYS: 1,
+
+  // How often a Trough item comes round. '' and 'daily' mean the same thing,
+  // so every row written before this existed keeps its old behaviour.
+  //
+  //   daily         every day
+  //   weekly        one chosen weekday
+  //   fortnightly   one chosen weekday, every other week
+  //   monthly       one chosen day of the month, 1-28
+  //
+  // 28 is the ceiling on purpose: a "the 31st" chore would silently skip
+  // February, April, June, September and November, which is not a schedule
+  // anybody meant to set.
+  TROUGH_FREQUENCIES: ['daily', 'weekly', 'fortnightly', 'monthly'],
 
   // ---------------------------------------------------------------------
   // The Sty -- everybody's own patch
@@ -137,9 +163,14 @@ var CONFIG = {
   // washing. Nobody can do somebody else's.
   STY_NAME: 'The Sty',
 
-  // Whether parents get the Sty list too. Everyone has a bedroom and laundry,
-  // so this is on. Turn it off to make it children-only.
+  // Whether parents get the Sty list too, for items that are set to go to
+  // EVERYONE. An item aimed at a group or at named people ignores this --
+  // the item says who gets it, and that is the whole point of having said so.
   STY_PARENTS_TOO: true,
+
+  // The weekday labels, Sunday first, to match JavaScript's getDay(). A Sty
+  // item stores the days it goes out as those numbers; blank means every day.
+  WEEKDAYS: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
 
   // ---------------------------------------------------------------------
   // The nightly hand-out

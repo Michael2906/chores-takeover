@@ -36,7 +36,13 @@ function loadStore(payload) {
         name: p.name,
         notes: p.notes || '',
         cost: Number(p.cost || 0),
-        stock: stock,                       // null means unlimited
+        // 'limited' carries the yes/no and 'stock' only the number, because
+        // google.script.run DROPS null properties on the way to the browser:
+        // a `stock: null` meaning "unlimited" arrived as undefined, and the
+        // client's `stock !== null` test then rendered "undefined left" under
+        // every unlimited prize. A boolean survives the trip.
+        limited: stock !== null,
+        stock: stock === null ? 0 : stock,
         soldOut: stock !== null && stock <= 0,
         affordable: Number(me.points || 0) >= Number(p.cost || 0)
       };

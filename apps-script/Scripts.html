@@ -447,7 +447,14 @@
       if (!m) return;
 
       if (m.hasPin) { askPin(m); return; }
-      enterAs(m.memberId, '');
+
+      // Signing somebody in is two server round trips -- pickMember, then
+      // the whole board -- which on a cold Apps Script container is seconds.
+      // Without this the tile just sits there and people tap it again.
+      pickerBusy(tile, true);
+      enterAs(m.memberId, '').then(function () {
+        pickerBusy(tile, false);
+      });
     });
 
     $('picker-signout').addEventListener('click', function () {
@@ -463,6 +470,17 @@
           }).catch(fail);
         });
     });
+  }
+
+  /**
+   * Marks the tile being signed in to, and stops the rest of the grid being
+   * tapped while it happens. The spinner is the tile's own, not the button
+   * spinner, because the tile is a whole card rather than a label.
+   */
+  function pickerBusy(tile, on) {
+    var grid = $('member-grid');
+    if (grid) grid.classList.toggle('is-waiting', !!on);
+    if (tile) tile.classList.toggle('is-busy', !!on);
   }
 
   /** Completes the pick and lands on the board. */
@@ -513,16 +531,36 @@
     }
     paint();
 
+    var checking = false;
+
     function submit() {
-      if (entered.length !== len) return;
+      if (checking || entered.length !== len) return;
       var err = $('pin-error');
       err.hidden = true;
+
+      // The PIN itself is checked server-side -- 2000 HMAC rounds plus the
+      // board load -- so OK has a real wait behind it. Lock the pad and say
+      // so, or it reads as a dead button and people hammer it.
+      checking = true;
+      padBusy(true);
+
       enterAs(member.memberId, entered, function (e) {
+        checking = false;
+        padBusy(false);
         entered = '';
         paint();
         err.textContent = e.message;
         err.hidden = false;
       });
+    }
+
+    function padBusy(on) {
+      var pad = document.querySelector('.pin-pad');
+      if (pad) pad.classList.toggle('is-checking', !!on);
+      var go = document.querySelector('[data-pin="go"]');
+      if (go) go.classList.toggle('is-busy', !!on);
+      var dots = $('pin-dots');
+      if (dots) dots.classList.toggle('is-checking', !!on);
     }
 
     document.querySelector('.pin-pad').addEventListener('click', function (e) {
@@ -1025,25 +1063,95 @@
       .catch(fail);
   }
 
+  /**
+   * Asks for the household password, then runs the thing behind it.
+   *
+   * Both doors out of "who is using this device" go through here. Once
+   * somebody has picked their name they stay picked -- the member session
+   * now lasts as long as the device is trusted -- so the only ways the
+   * active person changes are switching and signing out, and a child must
+   * not be able to do either on their own.
+   *
+   * `go(password, onError)` does the work; onError puts the message under
+   * the field and clears it, rather than closing the dialog, so a mistyped
+   * password does not mean starting again.
+   */
+  function askHouseholdPassword(title, blurb, okLabel, go) {
+    openModal(esc(title),
+      (blurb ? '<p class="form-hint" style="text-align:left">' + esc(blurb) +
+               '</p>' : '') +
+      '<form class="form" id="hpw-form" autocomplete="on">' +
+        '<label class="field"><span>Household password</span>' +
+          '<input type="password" name="password" ' +
+                 'autocomplete="current-password" /></label>' +
+        '<p class="form-error" id="hpw-error" role="alert" hidden></p>' +
+      '</form>',
+      [
+        { label: 'Cancel', kind: 'btn-secondary', act: closeModal },
+        { label: okLabel, kind: 'btn-primary', act: submit }
+      ]);
+
+    var f = $('hpw-form');
+
+    function submit(btn) {
+      var pw = f.password.value;
+      if (!pw) { showErr(new Error('Enter the household password.')); return; }
+      busy(btn, true);
+      go(pw, function (err) {
+        busy(btn, false);
+        showErr(err);
+      });
+    }
+
+    function showErr(err) {
+      var box = $('hpw-error');
+      box.textContent = err.message;
+      box.hidden = false;
+      f.password.value = '';
+      f.password.focus();
+    }
+
+    // Enter is what people press in a password field; there is no submit
+    // button inside the form, so it has to be caught here.
+    f.addEventListener('submit', function (e) { e.preventDefault(); });
+    f.password.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      submit(document.querySelector('[data-modal-btn="1"]'));
+    });
+
+    f.password.focus();
+  }
+
   function menuAction(which) {
     if (which === 'switch') {
-      api('releaseMember', {}).then(function () {
-        TOKENS.member = '';
-        state.me = null;
-        renderPicker();
-        show('picker');
-      }).catch(fail);
+      askHouseholdPassword(
+        'Switch person',
+        'Only the account holder can change who is using this device.',
+        'Switch',
+        function (password, onError) {
+          api('releaseMember', { password: password }).then(function () {
+            TOKENS.member = '';
+            state.me = null;
+            closeModal();
+            renderPicker();
+            show('picker');
+          }).catch(onError);
+        });
 
     } else if (which === 'signout') {
-      confirmModal('Sign this device out?',
-        'You will need the household email and password to get back in.',
-        'Sign out', function () {
-          api('signOutDevice', {}).then(function () {
+      askHouseholdPassword(
+        'Sign this device out?',
+        'This forgets the device entirely. You will need the household ' +
+        'email and password to get back in.',
+        'Sign out',
+        function (password, onError) {
+          api('signOutDevice', { password: password }).then(function () {
             TOKENS.household = '';
             TOKENS.member = '';
             closeModal();
             show('gate');
-          }).catch(fail);
+          }).catch(onError);
         });
 
     } else if (which === 'accounts') {
@@ -1071,26 +1179,30 @@
     var rows = t.items.length
       ? t.items.map(function (i) {
           return '<div class="list-row">' +
-            '<span class="grow"><span class="t">' + esc(i.title) + '</span>' +
+            '<span class="grow">' +
+              '<span class="t">' + esc(i.title) + '</span>' +
               (i.category || i.notes
-                ? '<br><span class="sub">' +
-                  esc([i.category, i.notes].filter(Boolean).join(' - ')) +
+                ? '<span class="sub">' +
+                  esc([i.category, i.notes].filter(Boolean).join(' · ')) +
                   '</span>'
                 : '') +
+              whenWhoTags(audienceSummary(i, t), scheduleSummary(i)) +
             '</span>' +
             '<span class="cost">' + i.points + 'p</span>' +
             (t.canEdit
-              ? '<button class="btn btn-sm btn-secondary" data-tedit="' +
-                  esc(i.troughId) + '">Edit</button>' +
-                '<button class="btn btn-sm btn-quiet" data-tdel="' +
-                  esc(i.troughId) + '">Remove</button>'
+              ? '<span class="row-acts">' +
+                  '<button class="btn btn-sm btn-secondary" data-tedit="' +
+                    esc(i.troughId) + '">Edit</button>' +
+                  '<button class="btn btn-sm btn-quiet" data-tdel="' +
+                    esc(i.troughId) + '">Remove</button>' +
+                '</span>'
               : '') +
           '</div>';
         }).join('')
       : '<p class="form-hint">Nothing on the list yet.</p>';
 
     var last = t.lastFilled
-      ? '<p class="form-hint" style="text-align:left">Filled today - ' +
+      ? '<p class="form-hint" style="text-align:left">Filled today — ' +
           t.lastFilled.total + ' chores handed out.</p>' +
         '<div class="fill-summary">' +
           t.lastFilled.perPerson.map(function (p) {
@@ -1103,9 +1215,10 @@
 
     openModal(esc(t.name),
       '<p class="form-hint" style="text-align:left">' +
-        'Chores that need doing every day, <strong>shared out</strong> - one ' +
-        'chore, one person. Nobody gets the same one two days running, the ' +
-        'children get the bigger share, and the points come out roughly even.' +
+        'Chores that come round on a schedule and are <strong>shared ' +
+        'out</strong> — one chore, one person. The pick happens inside ' +
+        'whoever the chore is aimed at, nobody gets the same one twice ' +
+        'running, and the points come out roughly even.' +
       '</p>' +
       '<p class="form-hint" style="text-align:left">' +
         'Handed out automatically every night at ' + fillHourLabel(t.fillHour) +
@@ -1116,32 +1229,46 @@
       '<div class="list-rows" id="trough-rows">' + rows + '</div>' +
       (t.canEdit
         ? '<hr class="hr">' +
+          '<div class="section-head"><h3>Add to the list</h3></div>' +
           '<form class="form" id="trough-add">' +
-            '<div class="field"><label for="trough-title">Add to the list</label>' +
+            '<div class="field"><label for="trough-title">Chore</label>' +
               comboHtml({ id: 'trough-title', name: 'title',
                           options: choreOptions() }) +
             '</div>' +
-            '<div class="field"><label for="trough-points">Points</label>' +
+            '<label class="field"><span>Points</span>' +
               '<input type="number" id="trough-points" name="points" ' +
-                     'min="0" max="999" style="max-width:7rem" />' +
-            '</div>' +
+                     'min="0" max="999" placeholder="0" />' +
+            '</label>' +
             '<div class="field"><label for="trough-cat">Category</label>' +
               comboHtml({ id: 'trough-cat', name: 'category', maxlength: 40,
                           placeholder: 'Pick one, or type your own',
                           options: plainOptions(state.categories) }) +
             '</div>' +
+            audienceFieldHtml('trough-new', null, t, 'Shared out between') +
+            scheduleFieldHtml('trough-new', null, t) +
           '</form>'
         : ''),
       [{ label: 'Close', kind: 'btn-secondary', act: closeModal }]
         .concat(t.canEdit ? [
-          { label: 'Add', kind: 'btn-secondary', act: function (btn) {
+          { label: 'Add', kind: 'btn-primary', act: function (btn) {
               var f = $('trough-add');
               if (!f.title.value.trim()) { toast('Enter a chore.', 'bad'); return; }
+              var problem = audienceProblem('trough-new');
+              if (problem) { toast(problem, 'bad'); return; }
+
               busy(btn, true);
+              var who = readAudience('trough-new');
+              var when = readSchedule('trough-new');
+
               api('addTroughItem', {
                 title: f.title.value,
                 points: f.points.value,
-                category: f.category.value
+                category: f.category.value,
+                audience: who.audience,
+                groupId: who.groupId,
+                memberIds: who.memberIds,
+                frequency: when.frequency,
+                onDay: when.onDay
               }).then(function (data) {
                 renderTrough(data);
                 toast('Added to the list.', 'good');
@@ -1155,6 +1282,9 @@
     if (addForm) {
       wireCombo('trough-title');
       wireCombo('trough-cat');
+      wireAudienceField('trough-new');
+      wireScheduleField('trough-new');
+
       addForm.title.addEventListener('input', function () {
         var typed = addForm.title.value.trim().toLowerCase();
         if (!typed) return;
@@ -1185,7 +1315,7 @@
           var item = t.items.filter(function (i) {
             return i.troughId === ed.dataset.tedit;
           })[0];
-          if (item) troughItemForm(item);
+          if (item) troughItemForm(item, t);
         }
       });
     }
@@ -1199,7 +1329,7 @@
     return h < 12 ? h + 'am' : (h - 12) + 'pm';
   }
 
-  function troughItemForm(item) {
+  function troughItemForm(item, t) {
     openModal('Edit ' + esc(item.title),
       '<form class="form" id="titem-form">' +
         '<label class="field"><span>Chore</span>' +
@@ -1213,24 +1343,40 @@
         '<label class="field"><span>Details</span>' +
           '<textarea name="notes" maxlength="1000">' + esc(item.notes || '') +
           '</textarea></label>' +
+        audienceFieldHtml('trough-ed', item, t, 'Shared out between') +
+        scheduleFieldHtml('trough-ed', item, t) +
       '</form>',
       [
         { label: 'Back', kind: 'btn-secondary', act: troughForm },
         { label: 'Save', kind: 'btn-primary', act: function (btn) {
             var f = $('titem-form');
+            var problem = audienceProblem('trough-ed');
+            if (problem) { toast(problem, 'bad'); return; }
+
             busy(btn, true);
+            var who = readAudience('trough-ed');
+            var when = readSchedule('trough-ed');
+
             api('updateTroughItem', {
               troughId: item.troughId,
               title: f.title.value,
               points: f.points.value,
               category: f.category.value,
-              notes: f.notes.value
+              notes: f.notes.value,
+              audience: who.audience,
+              groupId: who.groupId,
+              memberIds: who.memberIds,
+              frequency: when.frequency,
+              onDay: when.onDay
             }).then(function (data) {
               renderTrough(data);
               toast('Saved.', 'good');
             }).catch(fail).then(function () { busy(btn, false); });
           } }
       ]);
+
+    wireAudienceField('trough-ed');
+    wireScheduleField('trough-ed');
   }
 
   // -----------------------------------------------------------------
@@ -1464,6 +1610,297 @@
   /** A plain list of strings, shaped for comboHtml. */
   function plainOptions(list) {
     return (list || []).map(function (v) { return { value: v }; });
+  }
+
+  // -----------------------------------------------------------------
+  // Who gets it, and when
+  // -----------------------------------------------------------------
+  //
+  // Both daily lists ask the same question about people and a different one
+  // about timing, so the people half is shared and the timing halves sit
+  // beside it:
+  //
+  //   audience     everyone / a named group / specific people   (both lists)
+  //   days         which weekdays it goes out                   (the Sty)
+  //   frequency    how often it comes round                     (the Trough)
+  //
+  // Every builder takes a `pre` prefix for its element ids, so an add form
+  // and an edit form can be on screen at once without colliding.
+
+  var WEEKDAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  var WEEKDAY_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday',
+                      'Thursday', 'Friday', 'Saturday'];
+
+  function weekdayNames(list) {
+    return (list && list.length === 7) ? list : WEEKDAY_NAMES;
+  }
+
+  // --- The people half ----------------------------------------------
+
+  function audienceFieldHtml(pre, item, data, label) {
+    var a = (item && item.audience) || 'everyone';
+    var gid = (item && item.groupId) || '';
+    var picked = {};
+    ((item && item.memberIds) || []).forEach(function (id) {
+      picked[String(id)] = true;
+    });
+
+    var opts = '<option value="everyone"' +
+               (a === 'everyone' ? ' selected' : '') + '>Everyone</option>';
+
+    (data.groups || []).forEach(function (g) {
+      opts += '<option value="group:' + esc(g.groupId) + '"' +
+        (a === 'group' && String(gid) === String(g.groupId) ? ' selected' : '') +
+        '>' + esc(g.name) + '</option>';
+    });
+
+    opts += '<option value="people"' + (a === 'people' ? ' selected' : '') +
+            '>Pick people…</option>';
+
+    return '' +
+      '<label class="field"><span>' + esc(label || 'Who gets it') + '</span>' +
+        '<select id="' + pre + '-aud">' + opts + '</select>' +
+        ((data.groups || []).length
+          ? '<small>Groups are set up under Manage accounts.</small>'
+          : '<small>Make a group under Manage accounts to reuse a set of ' +
+            'people across chores.</small>') +
+      '</label>' +
+      '<div class="field" id="' + pre + '-people"' +
+        (a === 'people' ? '' : ' hidden') + '>' +
+        '<span>Which people</span>' +
+        '<div class="chips">' +
+          (data.members || []).map(function (m) {
+            return '<button type="button" class="chip-pick' +
+              (picked[String(m.memberId)] ? ' on' : '') +
+              '" data-who="' + esc(m.memberId) + '">' + esc(m.name) +
+              '</button>';
+          }).join('') +
+        '</div>' +
+      '</div>';
+  }
+
+  function wireAudienceField(pre) {
+    var sel = $(pre + '-aud');
+    var box = $(pre + '-people');
+    if (!sel || !box) return;
+
+    sel.addEventListener('change', function () {
+      box.hidden = sel.value !== 'people';
+    });
+
+    box.addEventListener('click', function (e) {
+      var chip = e.target.closest('[data-who]');
+      if (!chip) return;
+      chip.classList.toggle('on');
+    });
+  }
+
+  /** The three audience fields, in the shape the server stores. */
+  function readAudience(pre) {
+    var v = $(pre + '-aud').value;
+
+    if (v === 'people') {
+      var ids = [];
+      var chips = $(pre + '-people').querySelectorAll('.chip-pick.on');
+      for (var i = 0; i < chips.length; i++) ids.push(chips[i].dataset.who);
+      return { audience: 'people', memberIds: ids.join(','), groupId: '' };
+    }
+
+    if (v.indexOf('group:') === 0) {
+      return { audience: 'group', groupId: v.slice(6), memberIds: '' };
+    }
+    return { audience: 'everyone', groupId: '', memberIds: '' };
+  }
+
+  /**
+   * Says what is wrong with the audience, or null.
+   *
+   * Checked before the call so the server's error never has to be the first
+   * thing anybody sees.
+   */
+  function audienceProblem(pre) {
+    var v = $(pre + '-aud').value;
+    if (v === 'people' && !readAudience(pre).memberIds) {
+      return 'Pick at least one person.';
+    }
+    return null;
+  }
+
+  /** "Everyone", "The Kids", "Alex and Addie" -- for a list row. */
+  function audienceSummary(item, data) {
+    var kind = (item && item.audience) || 'everyone';
+    if (kind === 'everyone') return 'Everyone';
+
+    if (kind === 'group') {
+      var g = (data.groups || []).filter(function (x) {
+        return String(x.groupId) === String(item.groupId);
+      })[0];
+      // A group deleted out from under an item. Said plainly, because the
+      // item is now going to nobody at all.
+      return g ? g.name : 'Group deleted — nobody';
+    }
+
+    var names = (item.memberIds || []).map(function (id) {
+      var m = (data.members || []).filter(function (x) {
+        return String(x.memberId) === String(id);
+      })[0];
+      return m ? m.name : null;
+    }).filter(Boolean);
+
+    if (!names.length) return 'Nobody';
+    if (names.length === 1) return names[0];
+    return names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+  }
+
+  // --- The Sty's half: which days -----------------------------------
+
+  function daysFieldHtml(pre, item, names) {
+    names = weekdayNames(names);
+    var days = (item && item.days) || [];
+    var on = {};
+    // Blank means every day, so a new item starts with all seven lit rather
+    // than none -- "every day" is what most chores actually are.
+    if (!days.length) { for (var i = 0; i < 7; i++) on[i] = true; }
+    else days.forEach(function (d) { on[Number(d)] = true; });
+
+    var chips = '';
+    for (var d = 0; d < 7; d++) {
+      chips += '<button type="button" class="chip-pick' +
+               (on[d] ? ' on' : '') + '" data-day="' + d + '">' +
+               esc(names[d]) + '</button>';
+    }
+
+    return '<div class="field" id="' + pre + '-days-box">' +
+      '<span>Which days</span>' +
+      '<div class="chips">' + chips + '</div>' +
+      '<small>All seven is every day. An unfinished chore still carries ' +
+      'over into the days it is off.</small>' +
+    '</div>';
+  }
+
+  function wireDaysField(pre) {
+    var box = $(pre + '-days-box');
+    if (!box) return;
+    box.addEventListener('click', function (e) {
+      var chip = e.target.closest('[data-day]');
+      if (!chip) return;
+      chip.classList.toggle('on');
+    });
+  }
+
+  function readDays(pre) {
+    var out = [];
+    var chips = $(pre + '-days-box').querySelectorAll('.chip-pick.on');
+    for (var i = 0; i < chips.length; i++) out.push(chips[i].dataset.day);
+    return out.join(',');
+  }
+
+  function daysProblem(pre) {
+    return readDays(pre) ? null : 'Pick at least one day.';
+  }
+
+  /** "Every day" or "Mon, Tue, Wed, Thu". */
+  function daysSummary(item, names) {
+    names = weekdayNames(names);
+    var days = (item && item.days) || [];
+    if (!days.length || days.length === 7) return 'Every day';
+    return days.slice().sort(function (a, b) { return a - b; })
+      .map(function (d) { return names[Number(d)]; }).join(', ');
+  }
+
+  // --- The Trough's half: how often ---------------------------------
+
+  var FREQ_LABELS = {
+    daily: 'Every day',
+    weekly: 'Every week',
+    fortnightly: 'Every other week',
+    monthly: 'Every month'
+  };
+
+  function scheduleFieldHtml(pre, item, data) {
+    var freq = (item && item.frequency) || 'daily';
+    var onDay = Number((item && item.onDay) || 0);
+    var list = data.frequencies || ['daily', 'weekly', 'fortnightly', 'monthly'];
+
+    var opts = list.map(function (f) {
+      return '<option value="' + esc(f) + '"' +
+             (f === freq ? ' selected' : '') + '>' +
+             esc(FREQ_LABELS[f] || f) + '</option>';
+    }).join('');
+
+    var wdOpts = '';
+    for (var d = 0; d < 7; d++) {
+      wdOpts += '<option value="' + d + '"' +
+        (d === onDay && freq !== 'monthly' ? ' selected' : '') + '>' +
+        esc(WEEKDAY_LONG[d]) + '</option>';
+    }
+
+    var monthDay = freq === 'monthly' ? Math.max(1, Math.min(28, onDay)) : 1;
+
+    return '' +
+      '<label class="field"><span>How often</span>' +
+        '<select id="' + pre + '-freq">' + opts + '</select>' +
+      '</label>' +
+      '<label class="field" id="' + pre + '-wd-box"' +
+        (freq === 'weekly' || freq === 'fortnightly' ? '' : ' hidden') + '>' +
+        '<span>On which day</span>' +
+        '<select id="' + pre + '-wd">' + wdOpts + '</select>' +
+      '</label>' +
+      '<label class="field" id="' + pre + '-md-box"' +
+        (freq === 'monthly' ? '' : ' hidden') + '>' +
+        '<span>On which date</span>' +
+        '<input type="number" id="' + pre + '-md" min="1" max="28" value="' +
+          monthDay + '" />' +
+        '<small>1 to 28. A later date would skip the short months.</small>' +
+      '</label>';
+  }
+
+  function wireScheduleField(pre) {
+    var sel = $(pre + '-freq');
+    if (!sel) return;
+    sel.addEventListener('change', function () {
+      var f = sel.value;
+      $(pre + '-wd-box').hidden = !(f === 'weekly' || f === 'fortnightly');
+      $(pre + '-md-box').hidden = f !== 'monthly';
+    });
+  }
+
+  function readSchedule(pre) {
+    var f = $(pre + '-freq').value;
+    if (f === 'weekly' || f === 'fortnightly') {
+      return { frequency: f, onDay: $(pre + '-wd').value };
+    }
+    if (f === 'monthly') {
+      return { frequency: f, onDay: $(pre + '-md').value };
+    }
+    return { frequency: 'daily', onDay: 0 };
+  }
+
+  /** "Every day", "Every Saturday", "Every other Saturday", "The 1st...". */
+  function scheduleSummary(item) {
+    var f = (item && item.frequency) || 'daily';
+    var d = Number((item && item.onDay) || 0);
+
+    if (f === 'weekly') return 'Every ' + WEEKDAY_LONG[d % 7];
+    if (f === 'fortnightly') return 'Every other ' + WEEKDAY_LONG[d % 7];
+    if (f === 'monthly') {
+      return 'The ' + ordinal(Math.max(1, Math.min(28, d))) + ' of the month';
+    }
+    return 'Every day';
+  }
+
+  function ordinal(n) {
+    var s = ['th', 'st', 'nd', 'rd'];
+    var v = n % 100;
+    return n + (s[(v - 20) % 10] || s[v] || s[0]);
+  }
+
+  /** The two little tags under a Trough or Sty row: who, and when. */
+  function whenWhoTags(who, when) {
+    return '<span class="row-tags">' +
+      '<span class="row-tag">' + esc(who) + '</span>' +
+      '<span class="row-tag">' + esc(when) + '</span>' +
+    '</span>';
   }
 
   // -----------------------------------------------------------------
@@ -1777,6 +2214,12 @@
   // --- Manage sub-accounts ------------------------------------------
 
   function accountsForm() {
+    // Groups live on this screen too, so they are fetched before it opens
+    // rather than popping in afterwards.
+    api('loadGroups', {}).then(renderAccounts).catch(fail);
+  }
+
+  function renderAccounts(data) {
     var len = CONFIG_CLIENT.pinLength;
 
     function rows() {
@@ -1804,11 +2247,43 @@
       }).join('');
     }
 
+    function groupRows() {
+      if (!data.groups.length) {
+        return '<p class="form-hint" style="text-align:left">No groups yet. ' +
+               'A group is a name for a set of people — "The Kids" — ' +
+               'that both daily lists can then aim a chore at.</p>';
+      }
+      return data.groups.map(function (g) {
+        var names = g.memberIds.map(function (id) {
+          var m = data.members.filter(function (x) {
+            return String(x.memberId) === String(id);
+          })[0];
+          return m ? m.name : null;
+        }).filter(Boolean);
+
+        return '<div class="list-row">' +
+          '<span class="grow">' +
+            '<span class="t">' + esc(g.name) + '</span>' +
+            '<span class="sub">' +
+              (names.length ? esc(names.join(' · ')) : 'Nobody in it yet') +
+            '</span>' +
+          '</span>' +
+          (data.canEdit
+            ? '<span class="row-acts">' +
+                '<button class="btn btn-sm btn-secondary" data-gedit="' +
+                  esc(g.groupId) + '">Edit</button>' +
+              '</span>'
+            : '') +
+        '</div>';
+      }).join('');
+    }
+
     openModal('Accounts in ' + esc(state.household ? state.household.name : ''),
       '<div class="roster" id="roster">' + rows() + '</div>' +
-      '<hr style="margin:1rem 0;border:none;border-top:1px solid var(--line)">' +
+      '<hr class="hr">' +
       '<form class="form" id="add-form">' +
-        '<label class="field"><span>Add somebody</span>' +
+        '<div class="section-head"><h3>Add somebody</h3></div>' +
+        '<label class="field"><span>Name</span>' +
           '<input name="name" placeholder="Name" maxlength="40" /></label>' +
         '<label class="field"><span>PIN <small>(optional, ' + len +
           ' digits)</small></span>' +
@@ -1819,10 +2294,18 @@
             '<option value="member">No — they do chores</option>' +
             '<option value="approver">Yes — a parent account</option>' +
           '</select></label>' +
-      '</form>',
+      '</form>' +
+      '<hr class="hr">' +
+      '<div class="section-head"><h3>Groups</h3>' +
+        (data.canEdit
+          ? '<button class="btn btn-sm btn-secondary" id="group-new">' +
+            'New group</button>'
+          : '') +
+      '</div>' +
+      '<div class="list-rows" id="group-rows">' + groupRows() + '</div>',
       [
         { label: 'Done', kind: 'btn-secondary', act: closeModal },
-        { label: 'Add', kind: 'btn-primary', act: function (btn) {
+        { label: 'Add person', kind: 'btn-primary', act: function (btn) {
             var f = $('add-form');
             if (!f.name.value.trim()) { toast('Enter a name.', 'bad'); return; }
             busy(btn, true);
@@ -1830,8 +2313,8 @@
               name: f.name.value,
               pin: f.pin.value,
               role: f.role.value
-            }).then(function (data) {
-              state.members = data.members;
+            }).then(function (res) {
+              state.members = res.members;
               $('roster').innerHTML = rows();
               f.reset();
               renderApp();
@@ -1853,6 +2336,99 @@
 
       if (pt) pointsForm(m); else memberForm(m);
     });
+
+    var newBtn = $('group-new');
+    if (newBtn) {
+      newBtn.addEventListener('click', function () { groupForm(null, data); });
+    }
+
+    $('group-rows').addEventListener('click', function (e) {
+      var ed = e.target.closest('[data-gedit]');
+      if (!ed) return;
+      var g = data.groups.filter(function (x) {
+        return String(x.groupId) === String(ed.dataset.gedit);
+      })[0];
+      if (g) groupForm(g, data);
+    });
+  }
+
+  /**
+   * One group: a name and a set of people.
+   *
+   * Deleting is deliberately awkward when something is using the group. An
+   * item whose group has gone hands out to nobody, and a chore that silently
+   * stops happening is a worse outcome than a confirmation box.
+   */
+  function groupForm(g, data) {
+    var picked = {};
+    ((g && g.memberIds) || []).forEach(function (id) { picked[String(id)] = true; });
+
+    openModal(g ? 'Edit ' + esc(g.name) : 'New group',
+      '<form class="form" id="group-form">' +
+        '<label class="field"><span>Group name</span>' +
+          '<input name="name" maxlength="40" placeholder="The Kids" value="' +
+            esc(g ? g.name : '') + '" /></label>' +
+        '<div class="field" id="group-who">' +
+          '<span>Who is in it</span>' +
+          '<div class="chips">' +
+            data.members.map(function (m) {
+              return '<button type="button" class="chip-pick' +
+                (picked[String(m.memberId)] ? ' on' : '') +
+                '" data-who="' + esc(m.memberId) + '">' + esc(m.name) +
+                '</button>';
+            }).join('') +
+          '</div>' +
+          '<small>Both daily lists can aim a chore at this group, and the ' +
+          'Trough shares its chores out inside it.</small>' +
+        '</div>' +
+      '</form>',
+      [{ label: 'Back', kind: 'btn-secondary', act: accountsForm }]
+        .concat(g ? [
+          { label: 'Delete', kind: 'btn-danger', act: function () {
+              removeGroupFlow(g, false);
+            } }
+        ] : [])
+        .concat([
+          { label: 'Save', kind: 'btn-primary', act: function (btn) {
+              var f = $('group-form');
+              if (!f.name.value.trim()) { toast('Name the group.', 'bad'); return; }
+
+              var ids = [];
+              var chips = $('group-who').querySelectorAll('.chip-pick.on');
+              for (var i = 0; i < chips.length; i++) ids.push(chips[i].dataset.who);
+              if (!ids.length) { toast('Pick at least one person.', 'bad'); return; }
+
+              busy(btn, true);
+              var action = g ? 'updateGroup' : 'addGroup';
+              api(action, {
+                groupId: g ? g.groupId : '',
+                name: f.name.value,
+                memberIds: ids.join(',')
+              }).then(function (res) {
+                renderAccounts(res);
+                toast('Saved.', 'good');
+              }).catch(fail).then(function () { busy(btn, false); });
+            } }
+        ]));
+
+    $('group-who').addEventListener('click', function (e) {
+      var chip = e.target.closest('[data-who]');
+      if (chip) chip.classList.toggle('on');
+    });
+  }
+
+  function removeGroupFlow(g, force) {
+    api('removeGroup', { groupId: g.groupId, force: !!force })
+      .then(function (res) {
+        renderAccounts(res);
+        toast('Group deleted.', 'good');
+      })
+      .catch(function (err) {
+        // The server refuses while chores still point at it, and says how
+        // many. Repeat that back and let the decision be made here.
+        confirmModal('Delete ' + g.name + '?', err.message, 'Delete anyway',
+          function () { removeGroupFlow(g, true); }, true);
+      });
   }
 
   function memberForm(m) {
@@ -1969,19 +2545,23 @@
     var rows = t.items.length
       ? t.items.map(function (i) {
           return '<div class="list-row">' +
-            '<span class="grow"><span class="t">' + esc(i.title) + '</span>' +
+            '<span class="grow">' +
+              '<span class="t">' + esc(i.title) + '</span>' +
               (i.category || i.notes
-                ? '<br><span class="sub">' +
-                  esc([i.category, i.notes].filter(Boolean).join(' - ')) +
+                ? '<span class="sub">' +
+                  esc([i.category, i.notes].filter(Boolean).join(' · ')) +
                   '</span>'
                 : '') +
+              whenWhoTags(audienceSummary(i, t), daysSummary(i, t.weekdays)) +
             '</span>' +
             '<span class="cost">' + i.points + 'p</span>' +
             (t.canEdit
-              ? '<button class="btn btn-sm btn-secondary" data-yedit="' +
-                  esc(i.styId) + '">Edit</button>' +
-                '<button class="btn btn-sm btn-quiet" data-ydel="' +
-                  esc(i.styId) + '">Remove</button>'
+              ? '<span class="row-acts">' +
+                  '<button class="btn btn-sm btn-secondary" data-yedit="' +
+                    esc(i.styId) + '">Edit</button>' +
+                  '<button class="btn btn-sm btn-quiet" data-ydel="' +
+                    esc(i.styId) + '">Remove</button>' +
+                '</span>'
               : '') +
           '</div>';
         }).join('')
@@ -1989,32 +2569,39 @@
 
     openModal(esc(t.name),
       '<p class="form-hint" style="text-align:left">' +
-        'Chores that go to <strong>everybody</strong>, every day - their bed, ' +
-        'their room, their laundry. Nobody can do these for anyone else, so ' +
-        'there is nothing to share out.' +
+        'Chores that go to <strong>everybody they are aimed at</strong> — ' +
+        'their bed, their room, their laundry, their homework. Nobody can do ' +
+        'these for anyone else, so there is nothing to share out.' +
       '</p>' +
       '<p class="form-hint" style="text-align:left">' +
         (t.handedOutToday
           ? 'Handed out today: ' + t.handedOutToday + ' chores.'
           : 'Not handed out yet today.') +
-        ' Goes out automatically every night' +
-        (t.parentsToo ? ' to everyone' : ' to the children only') + '.' +
+        ' Goes out automatically every night. Items aimed at everyone ' +
+        (t.parentsToo ? 'include the parents' : 'go to the children only') +
+        '.' +
       '</p>' +
       '<hr class="hr">' +
       '<div class="list-rows" id="sty-rows">' + rows + '</div>' +
       (t.canEdit
         ? '<hr class="hr">' +
+          '<div class="section-head"><h3>Add to the list</h3></div>' +
           '<form class="form" id="sty-add">' +
-            '<div class="field"><label for="sty-title">Add to the list</label>' +
+            '<div class="field"><label for="sty-title">Chore</label>' +
               comboHtml({ id: 'sty-title', name: 'title',
                           options: choreOptions() }) +
             '</div>' +
-            '<div class="chips">' +
+            '<label class="field"><span>Points <small>(each person)</small>' +
+              '</span>' +
               '<input type="number" name="points" min="0" max="999" ' +
-                     'placeholder="Points" style="max-width:7rem" />' +
-              '<input name="category" maxlength="40" placeholder="Category" ' +
-                     'style="max-width:10rem" />' +
-            '</div>' +
+                     'placeholder="0" />' +
+            '</label>' +
+            '<label class="field"><span>Category</span>' +
+              '<input name="category" maxlength="40" ' +
+                     'placeholder="Kitchen, School…" />' +
+            '</label>' +
+            audienceFieldHtml('sty-new', null, t, 'Who gets it') +
+            daysFieldHtml('sty-new', null, t.weekdays) +
           '</form>'
         : ''),
       [{ label: 'Close', kind: 'btn-secondary', act: closeModal }]
@@ -2022,11 +2609,20 @@
           { label: 'Add', kind: 'btn-primary', act: function (btn) {
               var f = $('sty-add');
               if (!f.title.value.trim()) { toast('Enter a chore.', 'bad'); return; }
+              var problem = audienceProblem('sty-new') || daysProblem('sty-new');
+              if (problem) { toast(problem, 'bad'); return; }
+
               busy(btn, true);
+              var who = readAudience('sty-new');
+
               api('addStyItem', {
                 title: f.title.value,
                 points: f.points.value,
-                category: f.category.value
+                category: f.category.value,
+                audience: who.audience,
+                groupId: who.groupId,
+                memberIds: who.memberIds,
+                days: readDays('sty-new')
               }).then(function (data) {
                 renderSty(data);
                 toast('Added to the list.', 'good');
@@ -2037,6 +2633,9 @@
     var addForm = $('sty-add');
     if (addForm) {
       wireCombo('sty-title');
+      wireAudienceField('sty-new');
+      wireDaysField('sty-new');
+
       addForm.title.addEventListener('input', function () {
         var typed = addForm.title.value.trim().toLowerCase();
         if (!typed) return;
@@ -2067,13 +2666,13 @@
           var item = t.items.filter(function (i) {
             return i.styId === ed.dataset.yedit;
           })[0];
-          if (item) styItemForm(item);
+          if (item) styItemForm(item, t);
         }
       });
     }
   }
 
-  function styItemForm(item) {
+  function styItemForm(item, t) {
     openModal('Edit ' + esc(item.title),
       '<form class="form" id="yitem-form">' +
         '<label class="field"><span>Chore</span>' +
@@ -2087,24 +2686,38 @@
         '<label class="field"><span>Details</span>' +
           '<textarea name="notes" maxlength="1000">' + esc(item.notes || '') +
           '</textarea></label>' +
+        audienceFieldHtml('sty-ed', item, t, 'Who gets it') +
+        daysFieldHtml('sty-ed', item, t.weekdays) +
       '</form>',
       [
         { label: 'Back', kind: 'btn-secondary', act: styForm },
         { label: 'Save', kind: 'btn-primary', act: function (btn) {
             var f = $('yitem-form');
+            var problem = audienceProblem('sty-ed') || daysProblem('sty-ed');
+            if (problem) { toast(problem, 'bad'); return; }
+
             busy(btn, true);
+            var who = readAudience('sty-ed');
+
             api('updateStyItem', {
               styId: item.styId,
               title: f.title.value,
               points: f.points.value,
               category: f.category.value,
-              notes: f.notes.value
+              notes: f.notes.value,
+              audience: who.audience,
+              groupId: who.groupId,
+              memberIds: who.memberIds,
+              days: readDays('sty-ed')
             }).then(function (data) {
               renderSty(data);
               toast('Saved.', 'good');
             }).catch(fail).then(function () { busy(btn, false); });
           } }
       ]);
+
+    wireAudienceField('sty-ed');
+    wireDaysField('sty-ed');
   }
 
   // -----------------------------------------------------------------
@@ -2120,10 +2733,14 @@
       ? st.prizes.map(function (p) {
           var blocked = p.soldOut || !p.affordable;
           return '<div class="list-row prize' + (blocked ? ' cant' : '') + '">' +
-            '<span class="grow"><span class="t">' + esc(p.name) + '</span>' +
-              (p.notes ? '<br><span class="sub">' + esc(p.notes) + '</span>' : '') +
-              (p.stock !== null
-                ? '<br><span class="sub">' + p.stock + ' left</span>' : '') +
+            '<span class="grow">' +
+              '<span class="t">' + esc(p.name) + '</span>' +
+              (p.notes ? '<span class="sub">' + esc(p.notes) + '</span>' : '') +
+              // `limited`, not `stock !== null`: google.script.run DROPS null
+              // properties on the way over, so the null that meant
+              // "unlimited" arrived as undefined and every unlimited prize
+              // read "undefined left".
+              (p.limited ? '<span class="sub">' + p.stock + ' left</span>' : '') +
             '</span>' +
             '<span class="cost">' + p.cost + 'p</span>' +
             (p.soldOut
@@ -2134,10 +2751,12 @@
                   (p.affordable ? '' : ' disabled') + '>' +
                   (p.affordable ? 'Get it' : 'Not enough') + '</button>') +
             (st.canManage
-              ? '<button class="btn btn-sm btn-secondary" data-pedit="' +
-                  esc(p.prizeId) + '">Edit</button>' +
-                '<button class="btn btn-sm btn-quiet" data-pdel="' +
-                  esc(p.prizeId) + '">Remove</button>'
+              ? '<span class="row-acts">' +
+                  '<button class="btn btn-sm btn-secondary" data-pedit="' +
+                    esc(p.prizeId) + '">Edit</button>' +
+                  '<button class="btn btn-sm btn-quiet" data-pdel="' +
+                    esc(p.prizeId) + '">Remove</button>' +
+                '</span>'
               : '') +
           '</div>';
         }).join('')
@@ -2148,15 +2767,19 @@
           var cls = r.status === 'handed over' ? 'handed'
                   : r.status === 'cancelled' ? 'cancelled' : 'claimed';
           return '<div class="list-row">' +
-            '<span class="grow"><span class="t">' + esc(r.name) + '</span>' +
-              '<br><span class="sub">' + esc(r.memberName) + ' &middot; ' +
-              r.cost + 'p</span></span>' +
+            '<span class="grow">' +
+              '<span class="t">' + esc(r.name) + '</span>' +
+              '<span class="sub">' + esc(r.memberName) + ' &middot; ' +
+              r.cost + 'p</span>' +
+            '</span>' +
             '<span class="claim-status ' + cls + '">' + esc(r.status) + '</span>' +
             (st.canFulfil && r.status === 'claimed'
-              ? '<button class="btn btn-sm btn-go" data-fulfil="' +
-                  esc(r.redemptionId) + '">Handed over</button>' +
-                '<button class="btn btn-sm btn-quiet" data-cancel="' +
-                  esc(r.redemptionId) + '">Refund</button>'
+              ? '<span class="row-acts">' +
+                  '<button class="btn btn-sm btn-go" data-fulfil="' +
+                    esc(r.redemptionId) + '">Handed over</button>' +
+                  '<button class="btn btn-sm btn-quiet" data-cancel="' +
+                    esc(r.redemptionId) + '">Refund</button>' +
+                '</span>'
               : '') +
           '</div>';
         }).join('')
@@ -2167,8 +2790,9 @@
       '<div class="list-rows" id="shelf">' + shelf + '</div>' +
       (st.canManage
         ? '<hr class="hr">' +
+          '<div class="section-head"><h3>Add a prize</h3></div>' +
           '<form class="form" id="prize-add">' +
-            '<div class="field"><label for="prize-name">Add a prize</label>' +
+            '<div class="field"><label for="prize-name">Prize</label>' +
               comboHtml({ id: 'prize-name', name: 'name', maxlength: 80,
                           options: (st.ideas || []).map(function (x) {
                             return { value: x.name,
@@ -2176,13 +2800,14 @@
                           }) }) +
               '<small>' + (st.ideas || []).length +
               ' ready-made ideas with costs already set.</small></div>' +
-            '<div class="chips">' +
-              '<input type="number" name="cost" min="0" placeholder="Cost" ' +
-                     'style="max-width:7rem" />' +
+            '<label class="field"><span>Cost in points</span>' +
+              '<input type="number" name="cost" min="0" placeholder="0" />' +
+            '</label>' +
+            '<label class="field"><span>How many</span>' +
               '<input type="number" name="stock" min="0" ' +
-                     'placeholder="How many (blank = unlimited)" ' +
-                     'style="max-width:14rem" />' +
-            '</div>' +
+                     'placeholder="Leave blank for unlimited" />' +
+              '<small>Blank means it never runs out.</small>' +
+            '</label>' +
           '</form>'
         : '') +
       '<div class="section-head"><h3>Claims</h3></div>' +

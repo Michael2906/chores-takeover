@@ -21,9 +21,14 @@ Two tiers, on purpose.
 | Can | Everything, incl. managing accounts | Claim, work and finish chores |
 
 You create the household once. Signing in on a device trusts that device for
-60 days; after that the device only ever shows the **name list**. Everyone in
-the family taps their own name, enters a PIN if they have one, and gets their
-own view. Nobody but you ever needs an email address or a password.
+60 days. The first thing it shows is the **name list**: everyone taps their
+own name, enters a PIN if they have one, and gets their own view. Nobody but
+you ever needs an email address or a password.
+
+**That pick then sticks.** It lasts as long as the device is trusted, and
+changing it — switching person, or signing the device out — costs the
+household password. See
+[One person per device](#one-person-per-device-and-it-stays-that-way).
 
 A sub-account marked **parent** can approve chores and manage accounts too.
 
@@ -166,8 +171,9 @@ used exactly as before, so both routes work.
 | `Auth.gs` | Households, devices, sub-accounts, PINs, sessions, lockouts. |
 | `Chores.gs` | Chores and the transitions between their states. |
 | `Sheets.gs` | The spreadsheet as a database. |
-| `Trough.gs` | The shared daily list and the algorithm that divides it. |
-| `Sty.gs` | The daily list everybody gets a copy of. |
+| `Trough.gs` | The shared list, its schedules, and the algorithm that divides it. |
+| `Sty.gs` | The list everybody it is aimed at gets a copy of, and its days. |
+| `Groups.gs` | Named sets of people, and resolving who an item is aimed at. |
 | `Daily.gs` | The nightly job that hands both lists out. |
 | `PrizeIdeas.gs` | 61 ready-made prizes with costs. |
 | `Store.gs` | The Prize Pen, redemptions, and moving points by hand. |
@@ -212,6 +218,124 @@ purpose — same-origin would let the app's own `localStorage` quietly stand in
 for the bridge, which is the one thing the test needs to rule out. With them
 split, tokens appearing in `:8778`'s store and **not** `:8777`'s is proof the
 bridge carried them.
+
+---
+
+## Groups
+
+A group is a name and a set of people: **The Kids**, **The Big Two**. You make
+them under **Manage accounts**, and then both daily lists can aim a chore at
+one.
+
+The point is to say it once. Without groups, "the children" is re-ticked on
+every homework-ish chore, and the day a child stops counting as a child you
+go and edit all of them. Groups are resolved **at hand-out time**, never
+copied into the chore, so adding somebody to The Kids changes every chore
+aimed at The Kids with nothing to go back and fix.
+
+Every item on either list picks one of three things:
+
+| | What it means |
+| --- | --- |
+| **Everyone** | Every active account. The default, and what every item written before groups existed still is. |
+| **A group** | Whoever is in that group right now. |
+| **Pick people…** | Named accounts, for the one-off that does not deserve a group. |
+
+**Deleting a group that is in use is refused**, and the message says how many
+chores point at it. You can still delete it anyway. An item that has lost its
+group hands out to **nobody** and says `Group deleted — nobody` on the list,
+rather than quietly widening back out to the whole household — a chore that
+silently starts going to the wrong people is worse than one that visibly
+stops.
+
+---
+
+## The Sty: which days
+
+Each Sty item carries the days of the week it goes out. **Do your homework**
+is Monday to Thursday; nobody has homework at the weekend.
+
+All seven days selected is the same as none selected, and both store as
+blank — so "every day" has one representation, and rows written before the
+column existed read as every day.
+
+**The days only decide whether a NEW chore is posted.** Thursday's homework
+that nobody did is still owed on Friday and stays on the board until it is
+done. Not doing it does not make it go away, which is the whole point of the
+carry-over.
+
+`STY_PARENTS_TOO` only speaks for items aimed at **everyone**. An item aimed
+at a group or at named people has already said who it is for, and a global
+setting has no business second-guessing that.
+
+---
+
+## The Trough: how often
+
+Each Trough item comes round on a schedule rather than every single day:
+
+| | |
+| --- | --- |
+| **Every day** | What the list used to be, and what a blank frequency means. |
+| **Every week** | On one chosen weekday. |
+| **Every other week** | On one chosen weekday, every second week. |
+| **Every month** | On one chosen date, 1 to 28. |
+
+Monthly is capped at the 28th on purpose. "The 31st" would silently skip
+February, April, June, September and November, which is not a schedule
+anybody meant to set.
+
+"Every other week" is anchored to the week the item was **created**, not to
+an absolute week count. Anchoring it absolutely is simpler, but it means
+roughly half the fortnightly chores you create do not come round for thirteen
+days with nothing on screen explaining why.
+
+### The no-repeat rule had a hole
+
+"Nobody gets the same trough chore twice running" used to be a **date
+window** — not in the last `NO_REPEAT_DAYS` days. That does nothing at all
+for a weekly or monthly chore: its last hand-out was seven or thirty days
+back, comfortably outside the window, so the same child could have had the
+bins every Saturday for a year and the shuffle would never have noticed.
+
+The hand-out now also excludes **whoever had the previous instance of that
+item**, however long ago it was. Both rules apply; the date window still
+handles the daily case.
+
+The random pick happens **inside** whoever the item is aimed at. Point
+balancing still works out everybody's target share across the whole
+household, though — a child who is in every group would otherwise be measured
+against a smaller pot on each item and end up carrying far more than their
+share of the evening.
+
+---
+
+## One person per device, and it stays that way
+
+Picking your name used to last 12 hours. The tablet therefore dropped back to
+the name list twice a day, and whoever picked next could pick anybody — so
+"who is using this device" was really decided by whoever got there first.
+
+Now the pick lasts as long as the device is trusted (`SESSION_DAYS`), and
+there are exactly two ways it changes. **Both cost the household password:**
+
+- **Switch person**
+- **Sign this device out**
+
+Sign-out is gated for the same reason, and it has to be. Left open it is
+simply the long way round: a child who cannot become somebody else signs the
+device out instead, and the tablet is unusable until a parent types the
+password — which is the thing they were trying to avoid needing.
+
+The password is asked of **everybody, the account holder included**. Making
+the owner exempt would mean an owner account with no PIN could be tapped at
+the name list by anyone and then used to switch freely, which is the hole
+this closes. Wrong guesses count against the household row and lock out the
+same way guessing at the sign-in screen does.
+
+With nobody signed in there is nothing to escape, so the password is not
+asked for there — "Not your household?" on the name list still works in one
+tap on a device signed in to the wrong account.
 
 ---
 
@@ -472,6 +596,14 @@ colour.
 ---
 
 ## Things worth knowing
+
+**Upgrading an install that already has data: re-run `setUp()`.** Groups are a
+new sheet, and both daily lists gained columns. `setUp()` is safe to run again
+— it reuses the spreadsheet it already made, adds the missing sheet, and
+repairs every header row without touching a single existing row. New columns
+are always appended, never inserted, so nothing shifts. Skip this and the app
+still loads, but groups and schedules have nowhere to be written.
+
 
 **PEPPER is create-once.** It is generated on first use and stored in script
 properties, *not* in the spreadsheet — that is what stops a leaked sheet from

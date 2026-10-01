@@ -90,6 +90,103 @@ function fillDayFor(householdId, today) {
 }
 
 // ---------------------------------------------------------------------
+// Does this item come round today?
+// ---------------------------------------------------------------------
+//
+// Both lists ask a scheduling question every night, and they ask different
+// ones, so the two tests live here together rather than in whichever file
+// happens to call them.
+//
+//   The Sty      WHICH DAYS. "Do your homework" is Monday to Thursday; there
+//                is no homework at the weekend.
+//   The Trough   HOW OFTEN. Some chores are daily, some are a Saturday job,
+//                some come round once a month.
+//
+// Dates are the 'yyyy-MM-dd' strings todayStr() produces, already in the
+// script's timezone. They are read back through Date.UTC so the weekday
+// cannot be thrown off by the server's own idea of midnight -- building a
+// Date from the parts in local time is what makes a date go out by one.
+
+/** A 'yyyy-MM-dd' string split into numbers. */
+function dateParts(ymd) {
+  var p = String(ymd).slice(0, 10).split('-');
+  return { y: Number(p[0]), m: Number(p[1]), d: Number(p[2]) };
+}
+
+/** Weekday of a 'yyyy-MM-dd' string. Sunday 0, to match getDay(). */
+function weekdayOf(ymd) {
+  var p = dateParts(ymd);
+  return new Date(Date.UTC(p.y, p.m - 1, p.d)).getUTCDay();
+}
+
+/** Whole days from the epoch to a 'yyyy-MM-dd' string. */
+function dayNumberOf(ymd) {
+  var p = dateParts(ymd);
+  return Math.floor(Date.UTC(p.y, p.m - 1, p.d) / 86400000);
+}
+
+/** Which Sunday-started week a date falls in, counted from the epoch. */
+function weekNumberOf(ymd) {
+  // +4 because 1 Jan 1970 was a Thursday; this shifts the boundary to Sunday.
+  return Math.floor((dayNumberOf(ymd) + 4) / 7);
+}
+
+/**
+ * Whether a Sty item goes out today.
+ *
+ * 'days' is a CSV of weekday numbers. Blank means every day, which is what
+ * every row written before the column existed reads as.
+ *
+ * Note what this does NOT do: it does not clear up Thursday's homework on
+ * Friday. An unfinished chore is still owed and stays on the board until it
+ * is done -- this only decides whether a NEW one is posted.
+ */
+function styRunsToday(rec, today) {
+  var days = csvToList(rec.days);
+  if (!days.length) return true;
+
+  var wd = weekdayOf(today);
+  for (var i = 0; i < days.length; i++) {
+    if (Number(days[i]) === wd) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether a Trough item comes round today.
+ *
+ * '' and 'daily' are the same thing, so rows written before this existed keep
+ * going out every day.
+ *
+ * 'fortnightly' is anchored to the week the item was CREATED rather than to
+ * an absolute week count. Anchoring it absolutely is simpler, but it means
+ * roughly half the fortnightly chores you create do not come round for
+ * thirteen days and there is nothing on screen explaining why.
+ */
+function troughDueToday(rec, today) {
+  var freq = String(rec.frequency || 'daily').toLowerCase();
+  if (freq === '' || freq === 'daily') return true;
+
+  var onDay = Number(rec.onDay || 0);
+
+  if (freq === 'weekly') return weekdayOf(today) === onDay;
+
+  if (freq === 'fortnightly') {
+    if (weekdayOf(today) !== onDay) return false;
+    var born = String(rec.createdAt || '').slice(0, 10);
+    var anchor = /^\d{4}-\d{2}-\d{2}$/.test(born) ? weekNumberOf(born) : 0;
+    return (weekNumberOf(today) - anchor) % 2 === 0;
+  }
+
+  if (freq === 'monthly') {
+    // Capped at 28 when it is stored, so this cannot silently skip February.
+    return dateParts(today).d === Math.max(1, Math.min(28, onDay));
+  }
+
+  return true;
+}
+
+// ---------------------------------------------------------------------
 // Installing and checking the trigger
 // ---------------------------------------------------------------------
 
